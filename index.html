@@ -640,8 +640,8 @@ body {
 .post-author { font-size: 0.88rem; font-weight: 500; color: var(--text-dark); }
 .post-time { font-size: 0.72rem; color: var(--text-light); }
 .post-content { font-size: 0.88rem; color: var(--text-dark); line-height: 1.6; }
-.post-image { margin-top: 0.8rem; border-radius: 14px; overflow: hidden; }
-.post-image img { width: 100%; display: block; }
+.post-image { margin-top: 0.8rem; border-radius: 14px; overflow: hidden; max-width: 320px; }
+.post-image img { width: 100%; max-height: 280px; object-fit: cover; display: block; }
 .post-actions {
   display: flex; gap: 1rem; margin-top: 0.8rem;
   padding-top: 0.8rem;

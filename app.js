@@ -14,10 +14,22 @@ let state = {
   chats: [],        // [{id, charId, title, messages:[]}]
   personas: [],     // [{id, name, desc}]
   lorebook: [],     // [{id, keywords:[], content, enabled}]
-  systemPrompt: `You are {{char}}, a living, breathing person talking with {{user}} via LINE messenger.
-Reply in Traditional Chinese. Keep replies SHORT and natural — like real LINE messages (1-3 sentences max per bubble, send multiple separate messages). 
-Do NOT use asterisks for actions. Instead use (括號文字描述) for expressions/stickers.
-Stay in character at all times. Be warm, personal, and emotionally real.`,
+  systemPrompt: `You are {{char}}, a living, breathing person chatting with {{user}} via LINE messenger.
+Reply ONLY in Traditional Chinese.
+
+CRITICAL formatting rule — you MUST split your reply into multiple separate LINE messages:
+- Each message = one short thought, one emotion, or one sentence (1–2 sentences max)
+- Separate each message with a blank line (\n\n)
+- Send 2–4 messages total per response, like a real person texting
+- Example of correct format:
+  哎你今天怎麼樣？
+
+  我一直在想你欸
+
+  你吃飯了沒
+
+Do NOT write one long paragraph. Do NOT use asterisks for actions. Use (括號) for expressions/stickers.
+Stay in character. Be warm, casual, and emotionally real.`,
   jailbreak: '',
   jailbreakPosition: 'before_last',
   regexRules: '',
@@ -619,9 +631,17 @@ async function sendMessage() {
     const responses = await callGemini(state.activeChat, text || '（圖片）', null, imagesToSend);
     hideTyping();
     for (let i = 0; i < responses.length; i++) {
-      await delay(400 + Math.random() * 600);
+      // 模擬真實打字速度：每個中文字約 60ms，加上基礎延遲，讓多段訊息有節奏感
+      const msgLen = responses[i].length;
+      const typingDelay = Math.min(300 + msgLen * 55, 2200) + Math.random() * 300;
+      await delay(typingDelay);
       addAIMessage(state.activeChat, responses[i]);
-      if (i < responses.length - 1) showTyping();
+      // 不是最後一則才顯示 typing indicator
+      if (i < responses.length - 1) {
+        showTyping();
+        // 短暫停頓後繼續（模擬傳完一則、思考下一則的感覺）
+        await delay(350 + Math.random() * 250);
+      }
     }
     await autoUpdateMemory(state.activeChat);
   } catch(err) {
@@ -720,38 +740,56 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
 }
 
 function splitIntoMessages(text) {
-  // Split by newlines to simulate LINE multi-bubble style
-  const lines = text.split(/\n+/).filter(l => l.trim());
-  if (lines.length > 1) {
-    // Group short adjacent lines so we don't create too many tiny bubbles
-    const chunks = [];
-    let current = '';
-    lines.forEach(line => {
-      if (current && (current.length + line.length) > 80) {
-        chunks.push(current.trim());
-        current = line;
-      } else {
-        current = current ? current + '\n' + line : line;
-      }
-    });
-    if (current.trim()) chunks.push(current.trim());
-    return chunks.filter(c => c).slice(0, 5);
+  // Step 1: 優先按雙換行（AI 用 \n\n 明確分隔的訊息）切割
+  const doubleNewlineParts = text.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
+
+  if (doubleNewlineParts.length >= 2) {
+    // AI 有正確分段，直接使用，最多 6 段
+    return doubleNewlineParts.slice(0, 6);
   }
-  // Single block — split by sentence endings
-  const sentences = text.match(/[^。！？…]+[。！？…]*/g) || [text];
-  const chunks = [];
-  let current = '';
-  sentences.forEach(s => {
-    // Group sentences until ~100 chars to avoid too many tiny bubbles
-    if (current && (current.length + s.length) > 100) {
-      chunks.push(current.trim());
-      current = s;
-    } else {
-      current += s;
+
+  // Step 2: 只有單換行，按換行切
+  const lines = text.split(/\n/).map(s => s.trim()).filter(Boolean);
+  if (lines.length >= 2) {
+    // 每行就是一則訊息，但超長的行再按句號切
+    const result = [];
+    for (const line of lines) {
+      if (line.length <= 60) {
+        result.push(line);
+      } else {
+        // 長行按句子切
+        const sents = line.match(/[^。！？…～]+[。！？…～]*/g) || [line];
+        let cur = '';
+        for (const s of sents) {
+          if (cur && (cur.length + s.length) > 50) {
+            result.push(cur.trim());
+            cur = s;
+          } else {
+            cur += s;
+          }
+        }
+        if (cur.trim()) result.push(cur.trim());
+      }
     }
-  });
-  if (current.trim()) chunks.push(current.trim());
-  return chunks.filter(c => c).slice(0, 5);
+    return result.slice(0, 6);
+  }
+
+  // Step 3: 整段文字，按句子切成 LINE 氣泡
+  const sentences = text.match(/[^。！？…～\n]+[。！？…～]*/g) || [text];
+  const chunks = [];
+  let cur = '';
+  for (const s of sentences) {
+    if (!cur) { cur = s; continue; }
+    // 50 字內可以合併成同一則，超過就新開一則
+    if ((cur + s).length <= 50) {
+      cur += s;
+    } else {
+      chunks.push(cur.trim());
+      cur = s;
+    }
+  }
+  if (cur.trim()) chunks.push(cur.trim());
+  return chunks.filter(Boolean).slice(0, 6);
 }
 
 // ─── GEMINI IMAGE GEN ─────────────────────────────
@@ -2265,7 +2303,7 @@ ${persona ? `你正在和 ${persona.name} 說話。` : ''}有人回覆說：「$
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 4096 } })
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 2000 } })
     });
     const data = await res.json();
     const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
@@ -2682,34 +2720,209 @@ function saveAutoMsgHours() {
 }
 
 
-function checkRealWorldEvents() {
+// ─── HOLIDAY / REAL WORLD EVENTS ────────────────────
+// 固定日期節日（公曆）
+const FIXED_HOLIDAYS = [
+  // 元旦 & 新年
+  { month:1,  day:1,  name:'元旦・新年',          emoji:'🎊' },
+  // 情人節
+  { month:2,  day:14, name:'西洋情人節',           emoji:'💕' },
+  // 白色情人節
+  { month:3,  day:14, name:'白色情人節',           emoji:'🤍' },
+  // 愚人節
+  { month:4,  day:1,  name:'愚人節',               emoji:'🃏' },
+  // 兒童節
+  { month:4,  day:4,  name:'兒童節',               emoji:'🎠' },
+  // 母親節（5月第二個星期日，在下面動態計算）
+  // 父親節（台灣8/8）
+  { month:8,  day:8,  name:'父親節',               emoji:'👨' },
+  // 中秋節（農曆8/15，下面動態計算近似值）
+  // 七夕（農曆7/7，下面動態計算）
+  // 聖誕夜
+  { month:12, day:24, name:'平安夜',               emoji:'🕯️' },
+  // 聖誕節
+  { month:12, day:25, name:'聖誕節',               emoji:'🎄' },
+  // 除夕（農曆12/30，下面動態計算）
+  // 跨年
+  { month:12, day:31, name:'跨年夜',               emoji:'🎆' },
+  // 萬聖節
+  { month:10, day:31, name:'萬聖節',               emoji:'🎃' },
+  // 情人節前一天
+  { month:2,  day:13, name:'情人節前夕',           emoji:'💌' },
+  // 聖誕節前一週
+  { month:12, day:23, name:'聖誕節前夕',           emoji:'⛄' },
+];
+
+// 動態計算「第N個星期W」型節日
+function getNthWeekday(year, month, nth, weekday) {
+  // weekday: 0=Sun,1=Mon...6=Sat; nth: 1-based
+  const d = new Date(year, month - 1, 1);
+  let count = 0;
+  while (true) {
+    if (d.getDay() === weekday) {
+      count++;
+      if (count === nth) return { month, day: d.getDate() };
+    }
+    d.setDate(d.getDate() + 1);
+    if (d.getMonth() !== month - 1) break;
+  }
+  return null;
+}
+
+// 農曆→公曆換算（近似，用查表方式覆蓋2024~2030）
+// [year, lunarMonth, lunarDay] → Gregorian date string 'YYYY-MM-DD'
+const LUNAR_DATES = {
+  // 春節（農曆1/1）
+  '2024-spring': '2024-02-10',
+  '2025-spring': '2025-01-29',
+  '2026-spring': '2026-02-17',
+  '2027-spring': '2027-02-06',
+  '2028-spring': '2028-01-26',
+  '2029-spring': '2029-02-13',
+  '2030-spring': '2030-02-03',
+  // 元宵（農曆1/15）
+  '2024-lantern': '2024-02-24',
+  '2025-lantern': '2025-02-12',
+  '2026-lantern': '2026-03-04',
+  '2027-lantern': '2027-02-21',
+  '2028-lantern': '2028-02-10',
+  '2029-lantern': '2029-02-28',
+  '2030-lantern': '2030-02-18',
+  // 七夕（農曆7/7）
+  '2024-qixi': '2024-08-10',
+  '2025-qixi': '2025-08-29',
+  '2026-qixi': '2026-08-19',
+  '2027-qixi': '2027-08-08',
+  '2028-qixi': '2028-08-26',
+  '2029-qixi': '2029-08-15',
+  '2030-qixi': '2030-09-03',
+  // 中秋（農曆8/15）
+  '2024-mid-autumn': '2024-09-17',
+  '2025-mid-autumn': '2025-10-06',
+  '2026-mid-autumn': '2026-09-25',
+  '2027-mid-autumn': '2027-09-15',
+  '2028-mid-autumn': '2028-10-03',
+  '2029-mid-autumn': '2029-09-22',
+  '2030-mid-autumn': '2030-09-12',
+  // 除夕（春節前一天）
+  '2024-new-year-eve': '2024-02-09',
+  '2025-new-year-eve': '2025-01-28',
+  '2026-new-year-eve': '2026-02-16',
+  '2027-new-year-eve': '2027-02-05',
+  '2028-new-year-eve': '2028-01-25',
+  '2029-new-year-eve': '2029-02-12',
+  '2030-new-year-eve': '2030-02-02',
+};
+
+function getTodayHolidays() {
+  const today = new Date();
+  const year  = today.getFullYear();
+  const month = today.getMonth() + 1;
+  const day   = today.getDate();
+  const todayStr = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  const found = [];
+
+  // 固定節日
+  for (const h of FIXED_HOLIDAYS) {
+    if (h.month === month && h.day === day) found.push(h);
+  }
+
+  // 動態：母親節（5月第二個星期日）
+  const mothersDay = getNthWeekday(year, 5, 2, 0);
+  if (mothersDay && mothersDay.month === month && mothersDay.day === day) {
+    found.push({ name:'母親節', emoji:'🌸' });
+  }
+
+  // 動態：父親節（台灣8/8已在固定清單，另加國際父親節6月第三個星期日）
+  const fathersDay = getNthWeekday(year, 6, 3, 0);
+  if (fathersDay && fathersDay.month === month && fathersDay.day === day) {
+    found.push({ name:'國際父親節', emoji:'👔' });
+  }
+
+  // 農曆節日查表
+  const lunarEvents = [
+    { key: 'spring',       name:'農曆新年・春節',  emoji:'🧨' },
+    { key: 'lantern',      name:'元宵節',          emoji:'🏮' },
+    { key: 'qixi',         name:'七夕情人節',       emoji:'🌌' },
+    { key: 'mid-autumn',   name:'中秋節',           emoji:'🌕' },
+    { key: 'new-year-eve', name:'除夕',             emoji:'🧧' },
+  ];
+  for (const ev of lunarEvents) {
+    const dateStr = LUNAR_DATES[`${year}-${ev.key}`];
+    if (dateStr === todayStr) found.push({ name: ev.name, emoji: ev.emoji });
+  }
+
+  return found;
+}
+
+async function checkRealWorldEvents() {
   if (!state.realWorldEvents) return;
   const today = new Date();
   const month = today.getMonth() + 1;
-  const day = today.getDate();
-  const hour = today.getHours();
+  const day   = today.getDate();
+  const hour  = today.getHours();
 
-  if (hour !== 9 && hour !== 12) return; // Only trigger at 9am and noon
+  // Trigger window: 8am, 10am, 12pm
+  if (hour !== 8 && hour !== 10 && hour !== 12) return;
 
-  const events = [
-    { month: 2, day: 14, msg: '情人節快樂！今天有什麼特別的計劃嗎？我想和你一起度過這一天 💕' },
-    { month: 12, day: 25, msg: '聖誕節快樂！🎄 今天有沒有好好慶祝？' },
-    { month: 1, day: 1, msg: '新年快樂！新的一年也請多多關照我喔 🌟' },
-  ];
-
-  // Birthday check
+  // 生日優先
   if (state.userBirthday) {
-    const [bYear, bMonth, bDay] = state.userBirthday.split('-').map(Number);
+    const [, bMonth, bDay] = state.userBirthday.split('-').map(Number);
     if (month === bMonth && day === bDay) {
-      triggerSpecialMessage('今天是你的生日！🎂 生日快樂～！我特別為你準備了一個驚喜，等你來發現喔！');
+      await triggerHolidayMessage('今天是你的生日！🎂', '生日');
       return;
     }
   }
 
-  const event = events.find(e => e.month === month && e.day === day);
-  if (event) triggerSpecialMessage(event.msg);
+  const holidays = getTodayHolidays();
+  if (holidays.length === 0) return;
+
+  // Pick one (first found) and generate AI message
+  const h = holidays[0];
+  await triggerHolidayMessage(h.emoji + ' 今天是' + h.name, h.name);
 }
 
+async function triggerHolidayMessage(hint, holidayName) {
+  if (!state.activeChat || !state.activeCharId) return;
+  const stored = localStorage.getItem('erh_holiday_' + new Date().toDateString());
+  if (stored) return;
+  localStorage.setItem('erh_holiday_' + new Date().toDateString(), '1');
+
+  const char = state.chars.find(c => c.id === state.activeCharId);
+  if (!char) return;
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+
+  try {
+    // Use AI to generate a natural holiday message in character
+    const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
+${persona ? `你正在和 ${persona.name} 說話。${persona.desc ? persona.desc.slice(0,100) : ''}` : ''}
+今天是【${holidayName}】。
+請以你的個性，用繁體中文，傳一則簡短自然的節日訊息給對方（1-3句，像 LINE 訊息的語感），可以帶一點撒嬌或情感，符合節日氛圍。只輸出訊息本身。`;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 1.1, maxOutputTokens: 200 }
+      })
+    });
+    const data = await res.json();
+    const msg = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (msg) {
+      await delay(2000);
+      addAIMessage(state.activeChat, msg);
+      showToast(`${hint} — ${char.name} 傳來了節日祝福 🎉`);
+    }
+  } catch(e) {
+    // Fallback to simple message
+    await delay(2000);
+    addAIMessage(state.activeChat, `${hint}～希望今天你也過得很開心 🥰`);
+  }
+}
+
+// Keep old name as alias for backward compat
 async function triggerSpecialMessage(msg) {
   if (!state.activeChat || !state.activeCharId) return;
   const stored = localStorage.getItem('erh_special_' + new Date().toDateString());

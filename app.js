@@ -45,91 +45,92 @@ Stay in character at all times. Be warm, personal, and emotionally real.`,
 // ─── INDEXEDDB ─────────────────────────────────────
 function initDB() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open('erhabene', 3);
+    const req = indexedDB.open('erhabene', 4);
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats'].forEach(store => {
+      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats'];
+      ALL_STORES.forEach(store => {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store, { keyPath: 'id' });
         }
       });
     };
     req.onsuccess = e => { DB = e.target.result; res(DB); };
-    req.onerror = () => rej(req.error);
+    req.onerror = e => rej(e.target.error);
+    req.onblocked = () => console.warn('DB blocked');
   });
 }
 
 function dbGetAll(store) {
   return new Promise((res, rej) => {
-    const tx = DB.transaction(store, 'readonly');
-    const req = tx.objectStore(store).getAll();
-    req.onsuccess = () => res(req.result);
-    req.onerror = () => rej(req.error);
+    try {
+      const tx = DB.transaction(store, 'readonly');
+      const req = tx.objectStore(store).getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = () => rej(req.error);
+    } catch(e) { rej(e); }
   });
 }
 
 function dbPut(store, obj) {
   return new Promise((res, rej) => {
-    const tx = DB.transaction(store, 'readwrite');
-    const req = tx.objectStore(store).put(obj);
-    req.onsuccess = () => res(req.result);
-    req.onerror = () => rej(req.error);
+    try {
+      const tx = DB.transaction(store, 'readwrite');
+      const req = tx.objectStore(store).put(obj);
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    } catch(e) { rej(e); }
   });
 }
 
 function dbDelete(store, id) {
   return new Promise((res, rej) => {
-    const tx = DB.transaction(store, 'readwrite');
-    const req = tx.objectStore(store).delete(id);
-    req.onsuccess = () => res();
-    req.onerror = () => rej(req.error);
+    try {
+      const tx = DB.transaction(store, 'readwrite');
+      const req = tx.objectStore(store).delete(id);
+      req.onsuccess = () => res();
+      req.onerror = () => rej(req.error);
+    } catch(e) { rej(e); }
   });
 }
 
 async function loadAllData() {
-  const [chars, chats, personas, lorebook, socialPosts, settings, anniversaries] = await Promise.all([
+  const [chars, chats, personas, lorebook, socialPosts, settings] = await Promise.all([
     dbGetAll('chars'), dbGetAll('chats'), dbGetAll('personas'),
     dbGetAll('lorebook'), dbGetAll('socialPosts'), dbGetAll('settings'),
-    dbGetAll('anniversaries')
   ]);
   state.chars = chars;
   state.chats = chats;
   state.personas = personas;
   state.lorebook = lorebook;
   state.socialPosts = socialPosts;
-  state.anniversaries = anniversaries;
+
+  // load anniversaries (new store — safe fallback)
+  try { state.anniversaries = await dbGetAll('anniversaries'); } catch(e) { state.anniversaries = []; }
 
   // load memories
-  const memTx = DB.transaction('memory','readonly');
-  const memAll = await new Promise(res => {
-    const req = memTx.objectStore('memory').getAll();
-    req.onsuccess = () => res(req.result);
-  });
-  memAll.forEach(m => { state.memory[m.id] = m.items; });
+  try {
+    const memAll = await dbGetAll('memory');
+    memAll.forEach(m => { state.memory[m.id] = m.items; });
+  } catch(e) {}
 
   // load diary
-  const dTx = DB.transaction('diaryEntries','readonly');
-  const dAll = await new Promise(res => {
-    const req = dTx.objectStore('diaryEntries').getAll();
-    req.onsuccess = () => res(req.result);
-  });
-  dAll.forEach(d => { state.diaryEntries[d.id] = d.entries; });
+  try {
+    const dAll = await dbGetAll('diaryEntries');
+    dAll.forEach(d => { state.diaryEntries[d.id] = d.entries; });
+  } catch(e) {}
 
   // load achievements
-  const aTx = DB.transaction('achievements','readonly');
-  const aAll = await new Promise(res => {
-    const req = aTx.objectStore('achievements').getAll();
-    req.onsuccess = () => res(req.result);
-  });
-  aAll.forEach(a => { state.achievements[a.id] = a.data; });
+  try {
+    const aAll = await dbGetAll('achievements');
+    aAll.forEach(a => { state.achievements[a.id] = a.data; });
+  } catch(e) {}
 
   // load chat stats
-  const stTx = DB.transaction('chatStats','readonly');
-  const stAll = await new Promise(res => {
-    const req = stTx.objectStore('chatStats').getAll();
-    req.onsuccess = () => res(req.result);
-  });
-  stAll.forEach(s => { state.chatStats[s.id] = s.stats; });
+  try {
+    const stAll = await dbGetAll('chatStats');
+    stAll.forEach(s => { state.chatStats[s.id] = s.stats; });
+  } catch(e) {}
 
   // load settings
   const s = settings[0] || {};
@@ -2915,32 +2916,37 @@ function checkAnniversaryReminders() {
   try {
     await initDB();
     await loadAllData();
-  } catch(e) { console.warn('DB init:', e); }
+  } catch(e) { console.warn('DB init error:', e); }
 
   // Check saved credentials
   const savedKey = localStorage.getItem('erh_key');
   const savedModel = localStorage.getItem('erh_model');
 
   if (savedKey) {
-    document.getElementById('api-key-input').value = savedKey;
-    if (savedModel) document.getElementById('model-select').value = savedModel;
+    const keyInput = document.getElementById('api-key-input');
+    const modelSel = document.getElementById('model-select');
+    if (keyInput) keyInput.value = savedKey;
+    if (savedModel && modelSel) modelSel.value = savedModel;
     enterApp();
   }
 
   // Init birthday field
-  document.getElementById('birthday-input').value = state.userBirthday;
-  document.getElementById('birthday-input').addEventListener('change', e => {
-    state.userBirthday = e.target.value;
-    saveSettings();
-  });
+  const birthdayInput = document.getElementById('birthday-input');
+  if (birthdayInput) {
+    birthdayInput.value = state.userBirthday || '';
+    birthdayInput.addEventListener('change', e => {
+      state.userBirthday = e.target.value;
+      saveSettings();
+    });
+  }
 
   // Real world toggle init
   const toggle = document.getElementById('realworld-toggle');
-  toggle.classList.toggle('on', state.realWorldEvents);
+  if (toggle) toggle.classList.toggle('on', !!state.realWorldEvents);
 
   // AutoMsg toggle init
   const autoToggle = document.getElementById('automsg-toggle');
-  if (autoToggle) autoToggle.classList.toggle('on', state.autoMsgEnabled);
+  if (autoToggle) autoToggle.classList.toggle('on', !!state.autoMsgEnabled);
   const autoHoursInput = document.getElementById('automsg-hours-input');
-  if (autoHoursInput) autoHoursInput.value = state.autoMsgHours;
+  if (autoHoursInput) autoHoursInput.value = state.autoMsgHours || 3;
 })();

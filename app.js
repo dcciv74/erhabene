@@ -2265,7 +2265,7 @@ ${persona ? `你正在和 ${persona.name} 說話。` : ''}有人回覆說：「$
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200 } })
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1024 } })
     });
     const data = await res.json();
     const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();

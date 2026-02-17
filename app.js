@@ -791,40 +791,100 @@ function getAvatarRef(avatarStr) {
   return null; // emoji 或 URL 不上傳
 }
 
-async function triggerImageGen() {
+// ─── CHAT IMAGE GEN MODAL ───────────────────────────
+let _imageGenType  = 'solo';
+let _imageGenStyle = 'anime';
+
+function triggerImageGen() {
+  if (!state.activeChat) return;
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const char = state.chars.find(c => c.id === chat?.charId);
+  if (!char) return;
+
+  // Reset selections
+  _imageGenType  = 'solo';
+  _imageGenStyle = 'anime';
+  document.querySelectorAll('.imagegen-type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === 'solo'));
+  document.querySelectorAll('.imagegen-style-btn').forEach(b => b.classList.toggle('active', b.dataset.style === 'anime'));
+  document.getElementById('imagegen-extra-prompt').value = '';
+
+  // Show reference image info
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const refInfo = document.getElementById('imagegen-ref-info');
+  const refs = [];
+  if (getAvatarRef(char.avatar)) refs.push(`角色頭像（${char.name}）`);
+  if (persona && getAvatarRef(persona.avatar)) refs.push(`Persona 頭像（${persona.name}）`);
+  if (refInfo) {
+    refInfo.textContent = refs.length
+      ? `✓ 將上傳參考圖：${refs.join('、')}`
+      : '（未設定頭像圖片，將依角色描述生成）';
+  }
+
+  openModal('imagegen-modal');
+}
+
+function selectImageGenType(type, btn) {
+  _imageGenType = type;
+  document.querySelectorAll('.imagegen-type-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function selectImageGenStyle(style, btn) {
+  _imageGenStyle = style;
+  document.querySelectorAll('.imagegen-style-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+async function doTriggerImageGen() {
+  closeModal('imagegen-modal');
   if (!state.activeChat) return;
   const chat = state.chats.find(c => c.id === state.activeChat);
   const char = state.chars.find(c => c.id === chat?.charId);
   if (!char) return;
 
   showToast('🖼️ 正在生成圖片...');
-  try {
-    const recentMsgs = chat.messages.slice(-5).map(m => m.content).join(' ');
 
-    // 收集參考圖：角色頭貼 + persona 頭貼
+  try {
+    const recentMsgs = chat.messages.slice(-6).map(m => m.content).join(' ');
+    const extraPrompt = document.getElementById('imagegen-extra-prompt')?.value?.trim() || '';
+    const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+
+    // ── Collect reference images ──
     const refImages = [];
     const charRef = getAvatarRef(char.avatar);
     if (charRef) refImages.push(charRef);
-
-    const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
-    if (persona?.avatar) {
+    if (_imageGenType === 'duo' && persona?.avatar) {
       const personaRef = getAvatarRef(persona.avatar);
       if (personaRef) refImages.push(personaRef);
     }
 
-    const hasRefs = refImages.length > 0;
-    const prompt = hasRefs
-      ? `Based on the reference image(s) provided (use them as style/character reference), create an anime-style illustration.
-Character: ${char.name}. ${char.desc?.slice(0,100) || ''}.
-Scene based on recent conversation: ${recentMsgs.slice(0,200)}.
-Soft watercolor aesthetic, pastel colors. Keep character design consistent with reference.`
-      : `Anime style illustration. Character: ${char.name}. ${char.desc?.slice(0,100) || ''}.
-Scene based on recent conversation: ${recentMsgs.slice(0,200)}.
-Soft watercolor aesthetic, pastel colors.`;
+    // ── Style map ──
+    const styleDescMap = {
+      anime:      'anime illustration, soft cel shading, clean lineart, vibrant colors',
+      watercolor: 'soft watercolor illustration, pastel palette, dreamy and gentle, painterly texture',
+      chibi:      'chibi cute style, super deformed proportions, big sparkling eyes, kawaii',
+      sketch:     'pencil sketch style, clean lineart, monochrome with soft shading, artbook quality',
+      fantasy:    'fantasy illustration, detailed background, magical atmosphere, anime style',
+      lofi:       'lo-fi aesthetic, muted pastel tones, cozy atmosphere, illustrated art, soft glow',
+    };
+    const styleDesc = styleDescMap[_imageGenStyle] || styleDescMap.anime;
+
+    const isDuo = _imageGenType === 'duo';
+    const refNote = refImages.length > 0
+      ? 'Use the provided reference image(s) to keep the character appearance consistent. '
+      : '';
+    const personaNote = isDuo && persona
+      ? ` alongside ${persona.name}${persona.desc ? ` (${persona.desc.slice(0,60)})` : ''}`
+      : '';
+
+    const prompt = `${refNote}${styleDesc}.
+Character: ${char.name}${char.desc ? ` — ${char.desc.slice(0,120)}` : ''}${personaNote}.
+${recentMsgs ? `Scene inspired by recent conversation: ${recentMsgs.slice(0,200)}.` : ''}
+${extraPrompt ? `Additional details: ${extraPrompt}.` : ''}
+NOT photorealistic. No real people. No text in image. Illustrated art only.`;
 
     const imageUrl = await callGeminiImage(prompt, refImages);
     addAIMessage(state.activeChat, '📸 生成了一張圖片', 'image', imageUrl);
-    hideTyping();
   } catch(err) {
     showToast('圖片生成失敗：' + err.message);
   }
@@ -1968,42 +2028,135 @@ async function userPostSocial() {
   renderSocialFeed();
 }
 
+function socialUpdatePersonaInfo() {
+  const charId = document.getElementById('social-post-char-select')?.value;
+  const infoEl = document.getElementById('social-persona-info');
+  const nameEl = document.getElementById('social-persona-name-display');
+  if (!charId || !infoEl) return;
+  const char = state.chars.find(c => c.id === charId);
+  const persona = char?.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  if (persona) {
+    infoEl.style.display = 'flex';
+    nameEl.textContent = `Persona：${persona.name}${persona.desc ? ' — ' + persona.desc.slice(0, 60) : ''}`;
+  } else {
+    infoEl.style.display = 'none';
+  }
+}
+
+function socialToggleImageStyleField() {
+  // placeholder for future expansion
+}
+
+// Build social image prompt based on option key
+function buildSocialImagePrompt(option, char, persona, postContent) {
+  const charDesc = char.desc?.slice(0, 120) || '';
+  const personaDesc = persona ? ` 正在與 ${persona.name} 在一起。${persona.desc?.slice(0,60)||''}` : '';
+  const sceneHint = postContent?.slice(0, 120) || '';
+
+  const styleMap = {
+    solo_anime:      'anime illustration style, soft cel shading, detailed',
+    solo_watercolor: 'soft watercolor illustration, pastel palette, dreamy',
+    solo_chibi:      'chibi cute style, rounded features, big eyes, kawaii',
+    duo_anime:       'anime illustration style, two characters together, soft lighting',
+    duo_watercolor:  'soft watercolor illustration, two characters, pastel palette',
+    selfie_anime:    'anime selfie style, character looking at viewer, close-up',
+    auto:            'anime illustration style, scene from daily life, soft pastel',
+  };
+  const styleDesc = styleMap[option] || styleMap.auto;
+  const isDuo = option.startsWith('duo');
+
+  const refNote = (char.avatar?.startsWith('data:') || persona?.avatar?.startsWith('data:'))
+    ? 'Use provided reference image(s) to keep character appearance consistent. '
+    : '';
+
+  if (isDuo) {
+    return `${refNote}${styleDesc}. Scene: ${char.name}${charDesc ? ` (${charDesc})` : ''}${personaDesc}. Context: ${sceneHint}. NOT photorealistic. No real people. Illustrated art only.`;
+  }
+  return `${refNote}${styleDesc}. Character: ${char.name}${charDesc ? ` — ${charDesc}` : ''}. Context: ${sceneHint}. NOT photorealistic. No real people. Illustrated art only.`;
+}
+
 async function aiPostSocial() {
   const charId = document.getElementById('social-post-char-select').value;
   const promptText = document.getElementById('social-post-prompt').value.trim();
   const imageOption = document.getElementById('social-image-option').value;
+  const socialModelOverride = document.getElementById('social-model-input')?.value?.trim();
 
   const char = state.chars.find(c => c.id === charId);
-  if (!char) return;
+  if (!char) { showToast('請選擇角色'); return; }
+
+  // Resolve model: use social override if set, else main state.model
+  const modelToUse = socialModelOverride || state.model;
+
+  // Get persona bound to this char
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+
+  // Get recent chat messages for this char (from main chat, read-only — won't affect main chat)
+  const charChats = state.chats.filter(c => c.charId === char.id);
+  const recentMsgs = charChats
+    .flatMap(c => c.messages)
+    .sort((a, b) => b.time - a.time)
+    .slice(0, 20)
+    .reverse()
+    .map(m => `${m.role === 'user' ? (persona?.name || 'User') : char.name}: ${m.content}`)
+    .join('\n');
+
+  // Get memories for all this char's chats
+  const memTexts = charChats
+    .flatMap(c => state.memory[c.id] || [])
+    .map(m => `[${m.category}] ${m.text}`)
+    .join('\n');
+
   closeModal('social-compose-modal');
   showToast('✍️ 角色正在發文...');
 
   try {
-    // 社群貼文使用 gemini-2.0-flash，完全不套用 regex，字數更長
-    const postPrompt = `你是 ${char.name}。${char.desc?.slice(0,300)||''}
-發一則${currentSocialTab === 'plurk' ? '噗浪' : 'Instagram'}貼文。${promptText ? `主題：${promptText}` : '自由發揮，符合你的個性。'}
-字數150-400字，自然口語，有情感有細節，像真人在分享生活。${currentSocialTab === 'plurk' ? '可以加幾個 hashtag。' : '不要加 hashtag。'}
-只輸出貼文內容，不要加任何說明或標題。`;
+    // ── Build rich system + user prompt ──
+    const platformName = currentSocialTab === 'plurk' ? '噗浪 (Plurk)' : 'Instagram';
+    const systemPrompt = `你是 ${char.name}。
+${char.desc ? `[角色設定]\n${char.desc}` : ''}
+${persona ? `\n[Persona - 你正在和 ${persona.name} 說話]\n${persona.desc || ''}` : ''}
+${memTexts ? `\n[與對方的共同記憶]\n${memTexts}` : ''}`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
+    const userPrompt = `請以第一人稱，用繁體中文，在 ${platformName} 上發一篇貼文。
+${promptText ? `主題方向：${promptText}` : '根據你的個性與最近的生活自由發揮。'}
+
+${recentMsgs ? `[最近的對話記錄供參考，融入情緒與感受但不要直接引用]\n${recentMsgs}\n` : ''}
+
+字數150～400字，語氣自然真實，有個人色彩與情感細節，像真人在分享生活。
+${currentSocialTab === 'plurk' ? '可以加幾個 hashtag，放在最後。' : '不要加 hashtag。'}
+只輸出貼文正文，不要加標題、作者名或任何說明。`;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: postPrompt }] }],
-        generationConfig: { maxOutputTokens: 800 }  // 不限制太短
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        generationConfig: { temperature: 1.0, maxOutputTokens: 1024 }
       })
     });
     const data = await res.json();
-    // 直接取全文，不套 regex
+    if (!res.ok) throw new Error(data?.error?.message || 'API error ' + res.status);
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '（無法生成貼文）';
 
+    // ── Image generation ──
     let imageUrl = null;
     if (imageOption !== 'none') {
       try {
-        const imgPrompt = `${currentSocialTab === 'ig' ? 'Instagram photo' : 'Anime illustration'}. ${char.name}. ${imageOption === 'selfie' ? 'Selfie style, character looking at camera.' : 'Scene matching: ' + content.slice(0,100)} Soft pastel aesthetic.`;
-        imageUrl = await callGeminiImage(imgPrompt);
-      } catch(e) { /* image gen optional */ }
+        const refImages = [];
+        const charRef = getAvatarRef(char.avatar);
+        if (charRef) refImages.push(charRef);
+        if (imageOption.startsWith('duo') && persona?.avatar) {
+          const personaRef = getAvatarRef(persona.avatar);
+          if (personaRef) refImages.push(personaRef);
+        }
+        const imgPrompt = buildSocialImagePrompt(imageOption, char, persona, content);
+        imageUrl = await callGeminiImage(imgPrompt, refImages);
+      } catch(e) {
+        console.warn('Social image gen failed:', e);
+        showToast('⚠️ 圖片生成失敗，但貼文已發布');
+      }
     }
 
     const post = {
@@ -2021,7 +2174,6 @@ async function aiPostSocial() {
     await dbPut('socialPosts', post);
     renderSocialFeed();
     showToast('✓ 貼文已發布');
-    // 不再呼叫 aiReactToPost（移除角色互相回覆）
   } catch(err) {
     showToast('發文失敗：' + err.message);
   }
@@ -2063,7 +2215,7 @@ async function aiReplyToComment(postId, userComment) {
 有人回覆說：「${userComment}」
 寫一個自然的回覆（1-2句話）。只輸出回覆內容。`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2767,6 +2919,15 @@ function openModal(id) {
   if (id === 'social-compose-modal') {
     const sel = document.getElementById('social-post-char-select');
     sel.innerHTML = state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    // Pre-select active char if in chat
+    if (state.activeCharId) sel.value = state.activeCharId;
+    // Show current main model as hint
+    const hint = document.getElementById('social-main-model-hint');
+    if (hint) hint.textContent = state.model;
+    // Set default social model to main model
+    const socialModelInput = document.getElementById('social-model-input');
+    if (socialModelInput && !socialModelInput.value) socialModelInput.value = '';
+    socialUpdatePersonaInfo();
   }
   if (id === 'add-char-modal') updateCharPersonaSelects();
 }

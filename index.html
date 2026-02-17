@@ -436,7 +436,30 @@ body {
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* ─── CHAT IMAGE UPLOAD ─── */
+/* ─── IMAGE GEN MODAL ─── */
+.imagegen-type-btn, .imagegen-style-btn {
+  border: 2px solid rgba(201,184,232,0.25);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.7);
+  padding: 0.75rem 0.5rem;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text-mid);
+  text-align: center;
+  transition: all 0.15s;
+}
+.imagegen-type-btn:hover, .imagegen-style-btn:hover {
+  border-color: var(--lavender);
+  background: var(--lavender-soft);
+}
+.imagegen-type-btn.active, .imagegen-style-btn.active {
+  border-color: var(--lavender);
+  background: var(--lavender-soft);
+  color: var(--text-dark);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+
 .chat-img-thumb {
   position: relative;
   width: 52px; height: 52px;
@@ -2072,29 +2095,109 @@ body {
   </div>
 </div>
 
+<!-- IMAGE GEN OPTIONS MODAL (聊天視窗) -->
+<div class="modal-overlay" id="imagegen-modal">
+  <div class="modal" style="width:min(480px,96vw);">
+    <div class="modal-title">🖼️ 生成圖片</div>
+    <div class="modal-field">
+      <label class="modal-label">構圖類型</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;" id="imagegen-type-picker">
+        <button class="imagegen-type-btn active" data-type="solo" onclick="selectImageGenType('solo',this)">
+          <div style="font-size:1.4rem;margin-bottom:0.3rem;">👤</div>
+          <div style="font-size:0.82rem;font-weight:500;">角色獨照</div>
+        </button>
+        <button class="imagegen-type-btn" data-type="duo" onclick="selectImageGenType('duo',this)">
+          <div style="font-size:1.4rem;margin-bottom:0.3rem;">👥</div>
+          <div style="font-size:0.82rem;font-weight:500;">雙人合照</div>
+        </button>
+      </div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">畫風</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.4rem;" id="imagegen-style-picker">
+        <button class="imagegen-style-btn active" data-style="anime" onclick="selectImageGenStyle('anime',this)">
+          <div style="font-size:1.2rem;">🎌</div><div style="font-size:0.75rem;margin-top:0.2rem;">動漫插畫</div>
+        </button>
+        <button class="imagegen-style-btn" data-style="watercolor" onclick="selectImageGenStyle('watercolor',this)">
+          <div style="font-size:1.2rem;">🎨</div><div style="font-size:0.75rem;margin-top:0.2rem;">水彩軟萌</div>
+        </button>
+        <button class="imagegen-style-btn" data-style="chibi" onclick="selectImageGenStyle('chibi',this)">
+          <div style="font-size:1.2rem;">🌸</div><div style="font-size:0.75rem;margin-top:0.2rem;">Q版可愛</div>
+        </button>
+        <button class="imagegen-style-btn" data-style="sketch" onclick="selectImageGenStyle('sketch',this)">
+          <div style="font-size:1.2rem;">✏️</div><div style="font-size:0.75rem;margin-top:0.2rem;">線稿風格</div>
+        </button>
+        <button class="imagegen-style-btn" data-style="fantasy" onclick="selectImageGenStyle('fantasy',this)">
+          <div style="font-size:1.2rem;">✨</div><div style="font-size:0.75rem;margin-top:0.2rem;">奇幻插畫</div>
+        </button>
+        <button class="imagegen-style-btn" data-style="lofi" onclick="selectImageGenStyle('lofi',this)">
+          <div style="font-size:1.2rem;">🌙</div><div style="font-size:0.75rem;margin-top:0.2rem;">Lo-Fi 氛圍</div>
+        </button>
+      </div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">額外描述（選填）</label>
+      <input class="modal-input" id="imagegen-extra-prompt" placeholder="例：笑著看窗外、下雨天、校服...">
+    </div>
+    <div id="imagegen-ref-info" style="font-size:0.75rem;color:var(--text-light);padding:0.4rem 0.6rem;background:var(--lavender-soft);border-radius:8px;margin-top:-0.3rem;"></div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeModal('imagegen-modal')">取消</button>
+      <button class="modal-btn primary" onclick="doTriggerImageGen()">✨ 生成</button>
+    </div>
+  </div>
+</div>
+
 <!-- SOCIAL COMPOSE MODAL -->
 <div class="modal-overlay" id="social-compose-modal">
-  <div class="modal">
+  <div class="modal" style="width:min(520px,96vw);">
     <div class="modal-title" id="social-compose-title">✦ 讓角色發文</div>
+
     <div class="modal-field">
       <label class="modal-label">發文角色</label>
-      <select class="modal-select" id="social-post-char-select"></select>
+      <select class="modal-select" id="social-post-char-select" onchange="socialUpdatePersonaInfo()"></select>
     </div>
+
+    <!-- Persona 資訊顯示 -->
+    <div id="social-persona-info" style="display:none;padding:0.5rem 0.8rem;background:var(--lavender-soft);border-radius:10px;border:1px solid rgba(201,184,232,0.25);font-size:0.78rem;color:var(--text-mid);margin-bottom:0.6rem;display:flex;align-items:center;gap:0.5rem;">
+      <span>🎭</span><span id="social-persona-name-display"></span>
+    </div>
+
     <div class="modal-field">
       <label class="modal-label">發文內容提示</label>
       <textarea class="modal-textarea" id="social-post-prompt" placeholder="描述你希望角色發什麼主題的文章...（留空讓角色自由發揮）"></textarea>
     </div>
+
     <div class="modal-field">
       <label class="modal-label">圖片生成</label>
-      <select class="modal-select" id="social-image-option">
+      <select class="modal-select" id="social-image-option" onchange="socialToggleImageStyleField()">
         <option value="none">不生成圖片</option>
-        <option value="auto">根據內容自動生成</option>
-        <option value="selfie">自拍風格</option>
+        <option value="solo_anime">獨照 · 動漫插畫風</option>
+        <option value="solo_watercolor">獨照 · 水彩軟萌風</option>
+        <option value="solo_chibi">獨照 · Q版可愛風</option>
+        <option value="duo_anime">雙人照 · 動漫插畫風</option>
+        <option value="duo_watercolor">雙人照 · 水彩軟萌風</option>
+        <option value="selfie_anime">自拍 · 動漫風</option>
+        <option value="auto">根據貼文內容自動生成</option>
       </select>
     </div>
+
+    <div class="modal-field">
+      <label class="modal-label">使用模型</label>
+      <input class="modal-input" type="text" id="social-model-input"
+        placeholder="例：gemini-3-flash-preview"
+        list="social-model-datalist">
+      <datalist id="social-model-datalist">
+        <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+        <option value="gemini-3-pro-preview">Gemini 3 Pro Preview</option>
+        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+        <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash Exp</option>
+      </datalist>
+      <div style="font-size:0.7rem;color:var(--text-light);margin-top:0.3rem;">留空則使用主模型設定（<span id="social-main-model-hint"></span>）</div>
+    </div>
+
     <div class="modal-actions">
       <button class="modal-btn secondary" onclick="closeModal('social-compose-modal')">取消</button>
-      <button class="modal-btn primary" onclick="aiPostSocial()">發布</button>
+      <button class="modal-btn primary" onclick="aiPostSocial()">✦ 發布</button>
     </div>
   </div>
 </div>

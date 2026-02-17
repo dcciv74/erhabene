@@ -47,6 +47,8 @@ Stay in character. Be warm, casual, and emotionally real.`,
   autoMsgHours: 3,
   autoMsgTimer: null,
   editingCharId: null,
+  selectModeActive: false,
+  selectedMsgIds: new Set(),
   anniversaries: [], // [{id, type, charId, date, customName}]
   achievements: {},  // {charId: {generated: [{id,name,desc,icon,condition,unlocked}], stats}}
   theaterStyle: 'romantic',
@@ -472,6 +474,9 @@ async function createNewChat(charId) {
 }
 
 function openChat(chatId) {
+  // 切換聊天室時自動結束選取模式
+  if (state.selectModeActive) toggleSelectMode();
+
   state.activeChat = chatId;
   const chat = state.chats.find(c => c.id === chatId);
   if (!chat) return;
@@ -621,53 +626,11 @@ function renderMessages(chatId) {
       // Desktop: right-click context menu
       row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
 
-      // Mobile: long press (300ms) → show inline action buttons
-      // 記錄 touch 起始位置，移動超過 8px 就取消（防止滾動誤觸）
-      let _lpTimer = null;
-      let _lpStartX = 0, _lpStartY = 0;
-      let _lpFired = false;
-
-      row.addEventListener('touchstart', e => {
-        _lpFired = false;
-        _lpStartX = e.touches[0].clientX;
-        _lpStartY = e.touches[0].clientY;
-        _lpTimer = setTimeout(() => {
-          _lpFired = true;
-          // 震動回饋（Android）
-          if (navigator.vibrate) navigator.vibrate(40);
-          // 隱藏其他已開啟的 action panel
-          document.querySelectorAll('.msg-actions.mobile-show')
-            .forEach(el => el.classList.remove('mobile-show'));
-          const actions = row.querySelector('.msg-actions');
-          if (actions) {
-            actions.classList.add('mobile-show');
-            // 點其他地方收起
-            const dismiss = ev => {
-              if (!actions.contains(ev.target)) {
-                actions.classList.remove('mobile-show');
-                document.removeEventListener('touchstart', dismiss, true);
-              }
-            };
-            setTimeout(() => document.addEventListener('touchstart', dismiss, true), 80);
-          }
-        }, 300);
-      }, { passive: true });
-
-      row.addEventListener('touchmove', e => {
-        if (_lpTimer) {
-          const dx = e.touches[0].clientX - _lpStartX;
-          const dy = e.touches[0].clientY - _lpStartY;
-          // 移動超過 8px 視為滾動，取消長按
-          if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-            clearTimeout(_lpTimer);
-            _lpTimer = null;
-          }
-        }
-      }, { passive: true });
-
-      row.addEventListener('touchend', () => {
-        clearTimeout(_lpTimer);
-        _lpTimer = null;
+      // Select mode: tap to toggle selection
+      row.addEventListener('click', e => {
+        if (!state.selectModeActive) return;
+        e.stopPropagation();
+        toggleMsgSelect(msg.id, row);
       });
 
       groupEl.appendChild(row);
@@ -2668,7 +2631,6 @@ async function generateDiary(dateStr, styleOverride) {
     if (state.diaryEntries[char.id]?.[dateStr]) continue;
 
     try {
-      // ── 只取該角色的聊天記錄 ──────────────────────────────
       const chatContext = state.chats
         .filter(c => c.charId === char.id)
         .flatMap(c => c.messages)
@@ -2676,21 +2638,7 @@ async function generateDiary(dateStr, styleOverride) {
         .slice(-15)
         .map(m => `${m.role}: ${m.content}`).join('\n');
 
-      // ── 只取該角色的聊天室的記憶（避免跨角色污染）──────────
-      const charChatIds = state.chats
-        .filter(c => c.charId === char.id)
-        .map(c => c.id);
-      const memories = charChatIds
-        .flatMap(cid => (state.memory[cid] || []))
-        .map(m => m?.text)
-        .filter(Boolean)
-        .slice(0, 8)
-        .join('、');
-
-      // ── 讀取該角色綁定的 persona ────────────────────────────
-      const persona = char.personaId
-        ? state.personas.find(p => p.id === char.personaId)
-        : null;
+      const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,8).join('、');
 
       // 紀念日資訊注入
       const charAnnivs = state.anniversaries.filter(a => a.charId === char.id);
@@ -2703,10 +2651,10 @@ async function generateDiary(dateStr, styleOverride) {
 
       const prompt = `你是 ${char.name}。${char.desc?.slice(0,300)||''}
 今天是 ${dateStr}。請以第一人稱用繁體中文寫一篇私密日記。
-${persona ? `你日記中提到的重要的人叫做「${persona.name}」。${persona.desc ? persona.desc.slice(0,150) : ''}\n` : ''}
+
 篇幅要求：400～600字的完整日記，有情節有細節，不要虎頭蛇尾。
 
-${chatContext ? `今天和你重要的人（${persona?.name || '對方'}）發生了這些事（請融入日記）：\n${chatContext}\n` : '描述你今天想像中豐富的一天，有具體的事件與感受。\n'}
+${chatContext ? `今天和你重要的人發生了這些事（請融入日記）：\n${chatContext}\n` : '描述你今天想像中豐富的一天，有具體的事件與感受。\n'}
 ${memories ? `你們之間的重要共同記憶：${memories}\n` : ''}
 ${anniversaryContext ? `${anniversaryContext}\n` : ''}
 
@@ -3163,6 +3111,73 @@ function showCtxMenu(e, msgId) {
   const y = Math.min(e.clientY, window.innerHeight - 150);
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
+}
+
+// ─── SELECT MODE ────────────────────────────────────
+function toggleSelectMode() {
+  state.selectModeActive = !state.selectModeActive;
+  state.selectedMsgIds = new Set();
+
+  const bar = document.getElementById('select-mode-bar');
+  const btn = document.getElementById('select-mode-btn');
+
+  if (state.selectModeActive) {
+    document.body.classList.add('select-mode');
+    bar?.classList.add('active');
+    if (btn) { btn.style.color = 'var(--lavender)'; btn.style.background = 'var(--lavender-soft)'; }
+    updateSelectCountLabel();
+  } else {
+    document.body.classList.remove('select-mode');
+    bar?.classList.remove('active');
+    if (btn) { btn.style.color = ''; btn.style.background = ''; }
+    // 清除所有已選取樣式
+    document.querySelectorAll('.msg-row.selected').forEach(r => r.classList.remove('selected'));
+  }
+}
+
+function toggleMsgSelect(msgId, rowEl) {
+  if (state.selectedMsgIds.has(msgId)) {
+    state.selectedMsgIds.delete(msgId);
+    rowEl.classList.remove('selected');
+  } else {
+    state.selectedMsgIds.add(msgId);
+    rowEl.classList.add('selected');
+  }
+  updateSelectCountLabel();
+}
+
+function updateSelectCountLabel() {
+  const label = document.getElementById('select-count-label');
+  if (label) label.textContent = `已選取 ${state.selectedMsgIds.size} 則`;
+}
+
+function selectActionCopy() {
+  if (!state.selectedMsgIds.size) { showToast('請先選取訊息'); return; }
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  const texts = [...state.selectedMsgIds]
+    .map(id => chat.messages.find(m => m.id === id))
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time)
+    .map(m => `[${m.role === 'user' ? '我' : (state.chars.find(c=>c.id===state.activeCharId)?.name||'AI')}] ${m.content}`)
+    .join('\n\n');
+  navigator.clipboard.writeText(texts).then(() => {
+    showToast(`✓ 已複製 ${state.selectedMsgIds.size} 則訊息`);
+    toggleSelectMode();
+  });
+}
+
+function selectActionDelete() {
+  if (!state.selectedMsgIds.size) { showToast('請先選取訊息'); return; }
+  const count = state.selectedMsgIds.size;
+  if (!confirm(`確認刪除 ${count} 則訊息？`)) return;
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  chat.messages = chat.messages.filter(m => !state.selectedMsgIds.has(m.id));
+  dbPut('chats', chat);
+  toggleSelectMode();
+  renderMessages(state.activeChat);
+  showToast(`🗑️ 已刪除 ${count} 則訊息`);
 }
 
 function copyMsg(msgId) {

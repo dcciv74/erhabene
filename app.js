@@ -7,7 +7,7 @@
 let DB = null;
 let state = {
   apiKey: '',
-  model: 'gemini-2.5-pro-preview-06-05',
+  model: 'gemini-2.0-flash',
   temperature: 1.0,
   maxTokens: 2048,
   chars: [],        // [{id, name, avatar, desc, firstMsg, personaId}]
@@ -35,6 +35,10 @@ Stay in character at all times. Be warm, personal, and emotionally real.`,
   realWorldEvents: true,
   userBirthday: '',
   ctxTargetMsgId: null,
+  autoMsgEnabled: true,    // 角色自動傳訊息開關
+  autoMsgHours: 3,         // 幾小時無回覆後自動發
+  autoMsgTimer: null,      // setInterval handle
+  editingCharId: null,     // 正在編輯的角色 id
 };
 
 // ─── INDEXEDDB ─────────────────────────────────────
@@ -116,6 +120,8 @@ async function loadAllData() {
   if (s.regexRules) state.regexRules = s.regexRules;
   if (s.realWorldEvents !== undefined) state.realWorldEvents = s.realWorldEvents;
   if (s.userBirthday) state.userBirthday = s.userBirthday;
+  if (s.autoMsgEnabled !== undefined) state.autoMsgEnabled = s.autoMsgEnabled;
+  if (s.autoMsgHours) state.autoMsgHours = s.autoMsgHours;
 }
 
 async function saveSettings() {
@@ -127,6 +133,8 @@ async function saveSettings() {
     regexRules: state.regexRules,
     realWorldEvents: state.realWorldEvents,
     userBirthday: state.userBirthday,
+    autoMsgEnabled: state.autoMsgEnabled,
+    autoMsgHours: state.autoMsgHours,
   });
 }
 
@@ -155,6 +163,7 @@ function enterApp() {
   initDiary();
   renderSocialFeed();
   checkRealWorldEvents();
+  startAutoMsgTimer();
 }
 
 function modelShortName(m) {
@@ -209,7 +218,7 @@ function switchPage(page) {
     initDiary();
     sidebar.classList.remove('mobile-open');
   } else if (page === 'cctv') {
-    renderCCTV();
+    renderSpellStage();
     sidebar.classList.remove('mobile-open');
   } else if (page === 'settings') {
     sidebar.classList.remove('mobile-open');
@@ -614,8 +623,7 @@ function splitIntoMessages(text) {
 
 // ─── GEMINI IMAGE GEN ─────────────────────────────
 async function callGeminiImage(prompt) {
-  // Gemini 2.0 Flash / Imagen for image generation
-  const imageModel = 'gemini-2.0-flash-preview-image-generation';
+  const imageModel = 'gemini-3-pro-image-preview';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${imageModel}:generateContent?key=${state.apiKey}`;
   
   const body = {
@@ -862,34 +870,66 @@ async function saveChar() {
   const name = document.getElementById('char-name-input').value.trim();
   if (!name) { showToast('請輸入角色名稱'); return; }
 
-  const char = {
-    id: uid(),
-    name,
-    avatar: document.getElementById('char-avatar-input').value.trim() || '🌸',
-    desc: document.getElementById('char-desc-input').value.trim(),
-    firstMsg: document.getElementById('char-first-msg-input').value.trim(),
-    personaId: document.getElementById('char-persona-select').value || null,
-    createdAt: Date.now(),
-  };
+  // 取得頭像：優先用上傳的 base64，其次 URL/emoji 輸入
+  const avatarData = document.getElementById('char-avatar-input').dataset.base64 || '';
+  const avatarText = document.getElementById('char-avatar-input').value.trim();
+  const avatar = avatarData || avatarText || '🌸';
 
-  state.chars.push(char);
-  await dbPut('chars', char);
-  closeModal('add-char-modal');
-  renderCharsGrid();
-  renderSidebar();
-  updateSpellCharSelect();
-  showToast('✓ 角色已建立');
-
-  // Auto-create first chat
-  await createNewChat(char.id);
+  if (state.editingCharId) {
+    // ── 編輯模式 ──
+    const char = state.chars.find(c => c.id === state.editingCharId);
+    if (!char) return;
+    char.name = name;
+    char.avatar = avatar;
+    char.desc = document.getElementById('char-desc-input').value.trim();
+    char.firstMsg = document.getElementById('char-first-msg-input').value.trim();
+    char.personaId = document.getElementById('char-persona-select').value || null;
+    await dbPut('chars', char);
+    state.editingCharId = null;
+    closeModal('add-char-modal');
+    document.getElementById('add-char-modal-title').textContent = '🌸 新增角色';
+    document.getElementById('save-char-btn').textContent = '建立角色';
+    renderCharsGrid();
+    renderSidebar();
+    updateSpellCharSelect();
+    showToast('✓ 角色已更新');
+    // 若目前聊天就是這個角色，刷新 header
+    if (state.activeCharId === char.id) {
+      const avatarDiv = document.getElementById('header-avatar');
+      if (avatarDiv) avatarDiv.innerHTML = char.avatar?.startsWith('data:') || char.avatar?.startsWith('http')
+        ? `<img src="${char.avatar}" alt="">` : (char.avatar || '🌸');
+      document.getElementById('header-name').textContent = char.name;
+    }
+  } else {
+    // ── 新增模式 ──
+    const char = {
+      id: uid(),
+      name,
+      avatar,
+      desc: document.getElementById('char-desc-input').value.trim(),
+      firstMsg: document.getElementById('char-first-msg-input').value.trim(),
+      personaId: document.getElementById('char-persona-select').value || null,
+      createdAt: Date.now(),
+    };
+    state.chars.push(char);
+    await dbPut('chars', char);
+    closeModal('add-char-modal');
+    renderCharsGrid();
+    renderSidebar();
+    updateSpellCharSelect();
+    showToast('✓ 角色已建立');
+    await createNewChat(char.id);
+  }
 }
 
 function showCharInfo(charId) {
   const char = state.chars.find(c => c.id === charId);
   if (!char) return;
+  state.activeCharId = charId;
   const av = char.avatar;
   const avEl = document.getElementById('char-info-avatar');
-  avEl.innerHTML = av?.startsWith('http') ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;border-radius:24px;">` : (av || '🌸');
+  const isImg = av?.startsWith('http') || av?.startsWith('data:');
+  avEl.innerHTML = isImg ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;border-radius:24px;">` : (av || '🌸');
   document.getElementById('char-info-name').textContent = char.name;
   document.getElementById('char-info-desc').textContent = char.desc || '（無描述）';
 
@@ -906,25 +946,117 @@ function showCharInfo(charId) {
   openModal('char-info-modal');
 }
 
+async function deleteChar(charId) {
+  const char = state.chars.find(c => c.id === charId);
+  if (!char) return;
+  if (!confirm(`確認要刪除角色「${char.name}」？\n所有相關聊天記錄也會一併刪除，此操作無法復原。`)) return;
+
+  // 刪除角色
+  state.chars = state.chars.filter(c => c.id !== charId);
+  await dbDelete('chars', charId);
+
+  // 刪除所有相關聊天
+  const relatedChats = state.chats.filter(c => c.charId === charId);
+  for (const chat of relatedChats) {
+    state.chats = state.chats.filter(c => c.id !== chat.id);
+    await dbDelete('chats', chat.id);
+    if (state.memory[chat.id]) {
+      delete state.memory[chat.id];
+      await dbDelete('memory', chat.id);
+    }
+  }
+
+  // 若刪除的是目前開啟的角色，清空聊天畫面
+  if (state.activeCharId === charId) {
+    state.activeChat = null;
+    state.activeCharId = null;
+    document.getElementById('chat-header').style.display = 'none';
+    document.getElementById('input-area').style.display = 'none';
+    document.getElementById('messages-area').innerHTML = `<div class="empty-state" id="empty-chat"><div class="empty-state-icon">🌸</div><div class="empty-state-text">erhabene</div><div class="empty-state-sub">選擇一個角色開始對話，<br>或新增你的第一個角色卡</div></div>`;
+  }
+
+  closeModal('char-info-modal');
+  renderCharsGrid();
+  renderSidebar();
+  updateSpellCharSelect();
+  showToast(`✓ 角色「${char.name}」已刪除`);
+}
+
 function newChatWithChar() {
   if (!state.activeCharId) return;
   createNewChat(state.activeCharId);
   closeModal('char-info-modal');
 }
 
-function editChar() {
-  // Pre-fill add char modal with existing data
-  const char = state.chars.find(c => c.id === state.activeCharId);
+function editChar(charId) {
+  const id = charId || state.activeCharId;
+  const char = state.chars.find(c => c.id === id);
   if (!char) return;
+  state.editingCharId = id;
   closeModal('char-info-modal');
+
+  // 切換 modal 標題和按鈕
+  document.getElementById('add-char-modal-title').textContent = `✏️ 編輯角色：${char.name}`;
+  document.getElementById('save-char-btn').textContent = '儲存修改';
+
+  // 填入現有資料
   document.getElementById('char-name-input').value = char.name;
-  document.getElementById('char-avatar-input').value = char.avatar || '';
+  const avatarInput = document.getElementById('char-avatar-input');
+  avatarInput.value = char.avatar || '';
+  delete avatarInput.dataset.base64; // 清除舊的 base64
+
+  // 若是 base64 圖片，顯示預覽但不填入 input
+  const preview = document.getElementById('char-avatar-preview');
+  if (preview) {
+    const isImg = char.avatar?.startsWith('data:') || char.avatar?.startsWith('http');
+    preview.innerHTML = isImg
+      ? `<img src="${char.avatar}" style="width:48px;height:48px;border-radius:12px;object-fit:cover;">`
+      : `<span style="font-size:2rem">${char.avatar || '🌸'}</span>`;
+    if (char.avatar?.startsWith('data:')) {
+      avatarInput.value = '（已上傳圖片）';
+      avatarInput.dataset.base64 = char.avatar;
+    }
+  }
+
   document.getElementById('char-desc-input').value = char.desc || '';
   document.getElementById('char-first-msg-input').value = char.firstMsg || '';
+  const personaSel = document.getElementById('char-persona-select');
+  if (personaSel) personaSel.value = char.personaId || '';
+
+  // 切換到手動建立 tab
+  const manualTab = document.querySelector('#add-char-modal .modal-tab');
+  if (manualTab) {
+    document.querySelectorAll('#add-char-modal .modal-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#add-char-modal .modal-tab-content').forEach(t => t.classList.remove('active'));
+    manualTab.classList.add('active');
+    document.getElementById('char-manual').classList.add('active');
+  }
   openModal('add-char-modal');
+  // 編輯模式顯示刪除按鈕
+  const deleteBtn = document.getElementById('delete-char-btn');
+  if (deleteBtn) deleteBtn.style.display = '';
 }
 
-function openImportModal() { openModal('add-char-modal'); }
+function deleteCharFromModal() {
+  if (state.editingCharId) deleteChar(state.editingCharId);
+}
+
+function handleAvatarUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { showToast('請選擇圖片檔案'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const base64 = e.target.result; // data:image/png;base64,...
+    const avatarInput = document.getElementById('char-avatar-input');
+    avatarInput.value = '（已上傳圖片）';
+    avatarInput.dataset.base64 = base64;
+    const preview = document.getElementById('char-avatar-preview');
+    if (preview) preview.innerHTML = `<img src="${base64}" style="width:48px;height:48px;border-radius:12px;object-fit:cover;">`;
+    showToast('✓ 頭像已載入');
+  };
+  reader.readAsDataURL(file);
+}
 
 async function importCharCard(event) {
   const file = event.target.files[0];
@@ -1352,18 +1484,12 @@ async function userPostSocial() {
   await dbPut('socialPosts', post);
   document.getElementById('compose-input').value = '';
   renderSocialFeed();
-
-  // AI characters react after a delay
-  if (state.chars.length) {
-    setTimeout(() => aiReactToPost(post.id), 2000);
-  }
 }
 
 async function aiPostSocial() {
   const charId = document.getElementById('social-post-char-select').value;
   const promptText = document.getElementById('social-post-prompt').value.trim();
   const imageOption = document.getElementById('social-image-option').value;
-  const replyLimit = parseInt(document.getElementById('reply-limit-input').value) || 3;
 
   const char = state.chars.find(c => c.id === charId);
   if (!char) return;
@@ -1371,18 +1497,23 @@ async function aiPostSocial() {
   showToast('✍️ 角色正在發文...');
 
   try {
-    // Generate post content
-    const postPrompt = `你是 ${char.name}。${char.desc?.slice(0,200)||''}
+    // 社群貼文使用 gemini-2.0-flash，完全不套用 regex，字數更長
+    const postPrompt = `你是 ${char.name}。${char.desc?.slice(0,300)||''}
 發一則${currentSocialTab === 'plurk' ? '噗浪' : 'Instagram'}貼文。${promptText ? `主題：${promptText}` : '自由發揮，符合你的個性。'}
-字數50-150字，自然口語，不要用hashtag（噗浪除外）。只輸出貼文內容，不要加說明。`;
+字數150-400字，自然口語，有情感有細節，像真人在分享生活。${currentSocialTab === 'plurk' ? '可以加幾個 hashtag。' : '不要加 hashtag。'}
+只輸出貼文內容，不要加任何說明或標題。`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: postPrompt }] }], generationConfig: { maxOutputTokens: 300 } })
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: postPrompt }] }],
+        generationConfig: { maxOutputTokens: 800 }  // 不限制太短
+      })
     });
     const data = await res.json();
+    // 直接取全文，不套 regex
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '（無法生成貼文）';
 
     let imageUrl = null;
@@ -1408,48 +1539,9 @@ async function aiPostSocial() {
     await dbPut('socialPosts', post);
     renderSocialFeed();
     showToast('✓ 貼文已發布');
-
-    // Other chars react with limit
-    setTimeout(() => aiReactToPost(post.id, replyLimit), 1500);
+    // 不再呼叫 aiReactToPost（移除角色互相回覆）
   } catch(err) {
     showToast('發文失敗：' + err.message);
-  }
-}
-
-async function aiReactToPost(postId, maxReplies = 3) {
-  const post = state.socialPosts.find(p => p.id === postId);
-  if (!post) return;
-
-  const reactors = state.chars.filter(c => c.id !== post.charId).slice(0, maxReplies);
-  
-  for (const reactor of reactors) {
-    await delay(1500 + Math.random() * 2000);
-    try {
-      const prompt = `你是 ${reactor.name}。${reactor.desc?.slice(0,150)||''}
-看到這篇貼文：「${post.content}」
-寫一個自然的留言回覆（1-2句話，符合你的個性）。只輸出留言內容。`;
-
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 150 } })
-      });
-      const data = await res.json();
-      const comment = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-      if (comment) {
-        post.comments = post.comments || [];
-        post.comments.push({
-          id: uid(),
-          charId: reactor.id,
-          authorName: reactor.name,
-          content: comment,
-          time: Date.now(),
-        });
-        await dbPut('socialPosts', post);
-        if (currentSocialTab === post.platform) renderSocialFeed();
-      }
-    } catch(e) { /* silent */ }
   }
 }
 
@@ -1674,109 +1766,262 @@ ${memories ? `重要的記憶：${memories}` : ''}
   showToast('✓ 日記已生成');
 }
 
-// ─── CCTV ────────────────────────────────────────────
-function renderCCTV() {
+// ─── SPELL STAGE（獨立咒語舞台，原 CCTV 頁） ─────────────────
+let spellStageHistory = []; // [{role:'user'|'model', parts:[{text}]}]
+let spellStageCharId = null;
+let spellStageSystem = '';
+
+function renderSpellStage() {
+  const page = document.getElementById('cctv-page');
+  if (!page) return;
+  // 只重新渲染角色選擇行
   const charRow = document.getElementById('cctv-char-row');
-  const content = document.getElementById('cctv-content');
+  charRow.innerHTML = state.chars.length
+    ? state.chars.map(c => {
+        const av = c.avatar?.startsWith('data:') || c.avatar?.startsWith('http')
+          ? `<img src="${c.avatar}" style="width:22px;height:22px;border-radius:6px;object-fit:cover;">`
+          : `<span>${c.avatar||'🌸'}</span>`;
+        return `<div class="cctv-char-chip ${spellStageCharId===c.id?'active':''}" onclick="selectSpellStageChar('${c.id}')">${av} ${c.name}</div>`;
+      }).join('')
+    : '<div style="color:rgba(201,184,232,0.4);font-size:0.82rem;padding:0.5rem;">請先建立角色</div>';
+}
 
-  if (!state.chars.length) {
-    charRow.innerHTML = '';
-    content.innerHTML = `<div style="text-align:center;padding:3rem;color:rgba(201,184,232,0.4);font-size:0.88rem;">還沒有角色可監視</div>`;
-    return;
+function selectSpellStageChar(charId) {
+  spellStageCharId = charId;
+  spellStageHistory = [];
+  renderSpellStage();
+  // 清空對話區
+  const msgArea = document.getElementById('spell-stage-messages');
+  if (msgArea) {
+    msgArea.innerHTML = `<div style="text-align:center;padding:3rem 1rem;color:var(--text-light);font-size:0.85rem;">
+      已選擇角色，在下方輸入咒語場景後按「開始」<br>
+      <span style="font-size:0.75rem;opacity:0.7">此頁面不套用 regex，可閱讀完整長篇回覆</span>
+    </div>`;
   }
-
-  charRow.innerHTML = state.chars.map(c => `
-    <div class="cctv-char-chip ${state.cctvCharId === c.id ? 'active' : ''}" onclick="selectCCTVChar('${c.id}')">
-      <div class="cctv-chip-dot"></div>
-      ${c.name}
-    </div>
-  `).join('');
-
-  if (!state.cctvCharId) {
-    state.cctvCharId = state.chars[0].id;
-    document.querySelector('.cctv-char-chip')?.classList.add('active');
-  }
-
-  generateCCTVActivity();
+  const char = state.chars.find(c => c.id === charId);
+  if (char) showToast(`✨ 已選擇 ${char.name}`);
 }
 
-async function selectCCTVChar(charId) {
-  state.cctvCharId = charId;
-  document.querySelectorAll('.cctv-char-chip').forEach(c => c.classList.remove('active'));
-  document.querySelector(`[onclick="selectCCTVChar('${charId}')"]`)?.classList.add('active');
-  generateCCTVActivity();
-}
+async function startSpellStage() {
+  const scenarioInput = document.getElementById('spell-stage-scenario');
+  const scenario = scenarioInput?.value?.trim();
+  if (!spellStageCharId) { showToast('請先選擇角色'); return; }
+  if (!scenario) { showToast('請輸入場景描述'); return; }
 
-async function refreshCCTV() {
-  generateCCTVActivity();
-}
-
-async function generateCCTVActivity() {
-  const char = state.chars.find(c => c.id === state.cctvCharId);
+  const char = state.chars.find(c => c.id === spellStageCharId);
   if (!char) return;
-  const content = document.getElementById('cctv-content');
 
-  content.innerHTML = `
-    <div class="cctv-screen">
-      <div class="cctv-screen-header">
-        <div class="cctv-cam-label">CAM-01 · ${char.name}</div>
-        <div class="cctv-timestamp" id="cctv-time">${new Date().toLocaleTimeString('zh-TW')}</div>
-      </div>
-      <div class="cctv-screen-body">
-        <div class="cctv-activity-list" id="cctv-activities">
-          <div style="color:rgba(201,184,232,0.4);font-size:0.82rem;text-align:center;padding:1rem;">載入中...</div>
-        </div>
-      </div>
-    </div>
-  `;
+  // 建立系統提示
+  const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,5).join('\n');
+  const recentChat = state.activeChat
+    ? (state.chats.find(c=>c.id===state.activeChat)?.messages||[]).slice(-8).map(m=>`${m.role==='user'?'user':char.name}: ${m.content}`).join('\n')
+    : '';
+
+  spellStageSystem = `你是 ${char.name}，正在與 user 進行一場沉浸式小劇場。
+角色設定：${char.desc||''}
+
+${memories ? `[長期記憶]\n${memories}` : ''}
+${recentChat ? `[近期聊天背景]\n${recentChat}` : ''}
+
+[場景設定]
+${scenario}
+
+重要規則：
+- 這是獨立的小劇場空間，完全不影響主聊天記錄
+- 可以寫得更長、更有文學性、更多動作描述和內心獨白
+- 以繁體中文回應，不限字數，盡情投入角色
+- 不要用 * 包裹動作，改用（括號）表示動作和表情`;
+
+  spellStageHistory = [];
+  scenarioInput.value = '';
+
+  const msgArea = document.getElementById('spell-stage-messages');
+  if (msgArea) msgArea.innerHTML = `<div style="text-align:center;padding:1.5rem;color:var(--text-light);font-size:0.8rem;font-style:italic;">✨ 小劇場開始 — ${char.name}</div>`;
+
+  await sendSpellStageMessage('（場景開始）');
+}
+
+async function sendSpellStageMsg() {
+  const input = document.getElementById('spell-stage-input');
+  const text = input?.value?.trim();
+  if (!text) return;
+  if (!spellStageCharId) { showToast('請先選擇角色並開始場景'); return; }
+  input.value = '';
+  await sendSpellStageMessage(text);
+}
+
+async function sendSpellStageMessage(userText) {
+  if (!spellStageCharId) return;
+  const char = state.chars.find(c => c.id === spellStageCharId);
+  if (!char) return;
+
+  const msgArea = document.getElementById('spell-stage-messages');
+
+  // 顯示 user 訊息（非開始指令）
+  if (userText !== '（場景開始）') {
+    const userDiv = document.createElement('div');
+    userDiv.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:0.8rem;';
+    userDiv.innerHTML = `<div style="max-width:75%;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));color:white;border-radius:18px 18px 4px 18px;padding:0.75rem 1rem;font-size:0.88rem;line-height:1.6;white-space:pre-wrap;">${userText}</div>`;
+    msgArea.appendChild(userDiv);
+  }
+
+  // typing
+  const typingDiv = document.createElement('div');
+  typingDiv.id = 'spell-stage-typing';
+  typingDiv.style.cssText = 'display:flex;align-items:center;gap:0.6rem;margin-bottom:0.8rem;';
+  const av = char.avatar?.startsWith('data:')||char.avatar?.startsWith('http')
+    ? `<img src="${char.avatar}" style="width:32px;height:32px;border-radius:10px;object-fit:cover;">`
+    : `<span style="font-size:1.3rem">${char.avatar||'🌸'}</span>`;
+  typingDiv.innerHTML = `${av}<div class="msg-bubble" style="padding:0.6rem 0.9rem;"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
+  msgArea.appendChild(typingDiv);
+  msgArea.scrollTop = msgArea.scrollHeight;
+
+  // 加入歷史
+  spellStageHistory.push({ role: 'user', parts: [{ text: userText }] });
 
   try {
-    const now = new Date();
-    const hours = Array.from({length: 12}, (_, i) => {
-      const h = now.getHours() - 11 + i;
-      return { h: (h + 24) % 24, label: String((h+24)%24).padStart(2,'0') + ':' + String(Math.floor(Math.random()*4)*15).padStart(2,'0') };
-    });
+    const body = {
+      system_instruction: { parts: [{ text: spellStageSystem }] },
+      contents: spellStageHistory,
+      generationConfig: { temperature: state.temperature, maxOutputTokens: 2048 }
+    };
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    if (!res.ok) throw new Error('API Error ' + res.status);
+    const data = await res.json();
+    const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || '...';
 
-    const prompt = `你是 ${char.name}。${char.desc?.slice(0,150)||''}
-今天是 ${now.toLocaleDateString('zh-TW')}。
-生成這個角色今天的行動日誌（JSON格式）。每個時段一個活動。
-時段：${hours.map(h=>h.label).join(', ')}
-格式：[{"time":"HH:MM","activity":"正在做什麼（20字以內）"}]
-活動要符合角色個性，自然真實。只輸出JSON。`;
+    spellStageHistory.push({ role: 'model', parts: [{ text: replyText }] });
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
+    // 移除 typing
+    document.getElementById('spell-stage-typing')?.remove();
+
+    // 顯示回覆（不套 regex，完整顯示）
+    const aiDiv = document.createElement('div');
+    aiDiv.style.cssText = 'display:flex;align-items:flex-start;gap:0.6rem;margin-bottom:1.2rem;';
+    aiDiv.innerHTML = `${av}<div style="max-width:80%;background:rgba(255,255,255,0.92);border-radius:4px 18px 18px 18px;padding:0.9rem 1.1rem;font-size:0.88rem;line-height:1.8;color:var(--text-dark);white-space:pre-wrap;box-shadow:0 2px 8px var(--shadow);">${replyText}</div>`;
+    msgArea.appendChild(aiDiv);
+    msgArea.scrollTop = msgArea.scrollHeight;
+  } catch(e) {
+    document.getElementById('spell-stage-typing')?.remove();
+    const errDiv = document.createElement('div');
+    errDiv.style.cssText = 'text-align:center;color:#e87878;font-size:0.82rem;padding:0.5rem;';
+    errDiv.textContent = '錯誤：' + e.message;
+    msgArea.appendChild(errDiv);
+  }
+}
+
+function clearSpellStage() {
+  spellStageHistory = [];
+  const msgArea = document.getElementById('spell-stage-messages');
+  if (msgArea) msgArea.innerHTML = `<div style="text-align:center;padding:3rem 1rem;color:var(--text-light);font-size:0.85rem;">咒語舞台已清空</div>`;
+  showToast('✓ 已清空對話');
+}
+
+function handleSpellStageKey(e) {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    sendSpellStageMsg();
+  }
+}
+
+
+// ─── AUTO MESSAGE ────────────────────────────────────
+function startAutoMsgTimer() {
+  if (state.autoMsgTimer) clearInterval(state.autoMsgTimer);
+  if (!state.autoMsgEnabled) return;
+
+  // 每分鐘檢查一次是否超過設定時數沒有互動
+  state.autoMsgTimer = setInterval(async () => {
+    if (!state.autoMsgEnabled) return;
+    if (!state.activeChat || !state.activeCharId) return;
+    const chat = state.chats.find(c => c.id === state.activeChat);
+    if (!chat || !chat.messages.length) return;
+
+    const lastMsg = chat.messages[chat.messages.length - 1];
+    const hoursSince = (Date.now() - lastMsg.time) / (1000 * 60 * 60);
+    if (hoursSince < state.autoMsgHours) return;
+
+    // 避免重複發送（連續兩條 AI 訊息則跳過）
+    if (lastMsg.role === 'ai') return;
+
+    await sendAutoMessage(state.activeChat, state.activeCharId);
+  }, 60 * 1000); // 每分鐘檢查
+}
+
+async function sendAutoMessage(chatId, charId) {
+  const char = state.chars.find(c => c.id === charId);
+  if (!char) return;
+
+  const chat = state.chats.find(c => c.id === chatId);
+  if (!chat) return;
+
+  const memories = state.memory[chatId] || [];
+  const memText = memories.length ? memories.map(m => m.text).join(', ') : '';
+  const recentMsgs = chat.messages.slice(-6).map(m =>
+    `${m.role === 'user' ? 'user' : char.name}: ${m.content}`).join('\n');
+
+  const prompt = `你是 ${char.name}。${char.desc?.slice(0,200)||''}
+對方已經好幾個小時沒有回你訊息了。
+${memText ? `你們的共同記憶：${memText}` : ''}
+最近的對話：\n${recentMsgs}
+
+請主動傳一則短訊息給對方（1-2句，像 LINE 訊息），可以是：
+- 關心對方在做什麼
+- 分享一件小事
+- 撒嬌或想念
+- 詢問是否忙碌
+語氣自然，符合你的個性。只輸出訊息內容。`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 600 } })
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 150 }
+      })
     });
     const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '[]';
-    const clean = text.replace(/```json|```/g,'').trim();
-    const activities = JSON.parse(clean);
-
-    const listEl = document.getElementById('cctv-activities');
-    if (listEl) {
-      listEl.innerHTML = activities.map(a => `
-        <div class="cctv-activity-item">
-          <div class="cctv-act-time">${a.time}</div>
-          <div class="cctv-act-text">${a.activity}</div>
-        </div>
-      `).join('');
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (text) {
+      addAIMessage(chatId, text);
+      showToast(`💬 ${char.name} 傳來了一則訊息`);
     }
-  } catch(e) {
-    const listEl = document.getElementById('cctv-activities');
-    if (listEl) listEl.innerHTML = '<div style="color:rgba(201,184,232,0.4);font-size:0.82rem;text-align:center;padding:1rem;">無法載入活動記錄</div>';
-  }
-
-  // Update timestamp
-  setInterval(() => {
-    const t = document.getElementById('cctv-time');
-    if (t) t.textContent = new Date().toLocaleTimeString('zh-TW');
-  }, 1000);
+  } catch(e) { /* silent */ }
 }
 
-// ─── REAL WORLD EVENTS ──────────────────────────────
+async function triggerAutoMsgNow() {
+  if (!state.activeChat || !state.activeCharId) {
+    showToast('請先開啟一個聊天視窗'); return;
+  }
+  showToast('💬 正在發送...');
+  await sendAutoMessage(state.activeChat, state.activeCharId);
+}
+
+function toggleAutoMsg() {
+  state.autoMsgEnabled = !state.autoMsgEnabled;
+  const toggle = document.getElementById('automsg-toggle');
+  if (toggle) toggle.classList.toggle('on', state.autoMsgEnabled);
+  if (state.autoMsgEnabled) {
+    startAutoMsgTimer();
+    showToast('✓ 自動傳訊已開啟');
+  } else {
+    if (state.autoMsgTimer) clearInterval(state.autoMsgTimer);
+    showToast('自動傳訊已關閉');
+  }
+  saveSettings();
+}
+
+function saveAutoMsgHours() {
+  const val = parseInt(document.getElementById('automsg-hours-input')?.value) || 3;
+  state.autoMsgHours = Math.max(1, Math.min(24, val));
+  saveSettings();
+  showToast(`✓ 已設定：${state.autoMsgHours} 小時後自動傳訊`);
+}
+
+
 function checkRealWorldEvents() {
   if (!state.realWorldEvents) return;
   const today = new Date();
@@ -1990,6 +2235,19 @@ function openModal(id) {
 
 function closeModal(id) {
   document.getElementById(id)?.classList.remove('open');
+  // 關閉角色 modal 時重置編輯狀態
+  if (id === 'add-char-modal') {
+    state.editingCharId = null;
+    const title = document.getElementById('add-char-modal-title');
+    if (title) title.textContent = '🌸 新增角色';
+    const btn = document.getElementById('save-char-btn');
+    if (btn) btn.textContent = '建立角色';
+    const deleteBtn = document.getElementById('delete-char-btn');
+    if (deleteBtn) deleteBtn.style.display = 'none';
+    if (avatarInput) delete avatarInput.dataset.base64;
+    const preview = document.getElementById('char-avatar-preview');
+    if (preview) preview.innerHTML = '';
+  }
 }
 
 function switchModalTab(btn, contentId) {
@@ -2144,4 +2402,10 @@ function confirmClearAll() {
   // Real world toggle init
   const toggle = document.getElementById('realworld-toggle');
   toggle.classList.toggle('on', state.realWorldEvents);
+
+  // AutoMsg toggle init
+  const autoToggle = document.getElementById('automsg-toggle');
+  if (autoToggle) autoToggle.classList.toggle('on', state.autoMsgEnabled);
+  const autoHoursInput = document.getElementById('automsg-hours-input');
+  if (autoHoursInput) autoHoursInput.value = state.autoMsgHours;
 })();

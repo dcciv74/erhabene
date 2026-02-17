@@ -1252,7 +1252,7 @@ body {
     <button class="nav-btn" onclick="switchPage('chars')" title="角色" id="nav-chars">🌸</button>
     <button class="nav-btn" onclick="switchPage('social')" title="社群" id="nav-social">✦</button>
     <button class="nav-btn" onclick="switchPage('diary')" title="日記" id="nav-diary">📔</button>
-    <button class="nav-btn" onclick="switchPage('cctv')" title="監視器" id="nav-cctv">📹</button>
+    <button class="nav-btn" onclick="switchPage('cctv')" title="咒語舞台" id="nav-cctv">✨</button>
     <div class="nav-spacer"></div>
     <button class="nav-btn" onclick="openModal('memory-modal')" title="長期記憶">🧠</button>
     <button class="nav-btn" onclick="openModal('lorebook-modal')" title="Lorebook">📚</button>
@@ -1349,16 +1349,35 @@ body {
       </div>
     </div>
 
-    <!-- CCTV PAGE -->
-    <div class="page" id="cctv-page">
-      <div class="cctv-header">
-        <div class="cctv-title">SURVEILLANCE FEED</div>
-        <div class="cctv-live-badge">LIVE</div>
-        <div style="flex:1"></div>
-        <button class="header-btn" style="color:rgba(201,184,232,0.5)" onclick="refreshCCTV()" title="重新整理">↻</button>
+    <!-- SPELL STAGE PAGE（原 CCTV） -->
+    <div class="page" id="cctv-page" style="display:flex;flex-direction:column;background:var(--beige-soft);">
+      <div style="padding:0.8rem 1.2rem;background:var(--header-bg);border-bottom:1px solid rgba(201,184,232,0.2);display:flex;align-items:center;gap:0.8rem;flex-shrink:0;">
+        <div style="font-size:1rem;font-weight:700;color:var(--text-dark);">✨ 咒語舞台</div>
+        <div style="font-size:0.72rem;color:var(--text-light);flex:1">獨立空間 · 不套 regex · 支援長篇回覆</div>
+        <button onclick="clearSpellStage()" style="background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:10px;padding:0.3rem 0.7rem;font-family:inherit;font-size:0.75rem;color:var(--text-mid);cursor:pointer;">清空</button>
       </div>
-      <div class="cctv-char-select-row" id="cctv-char-row"></div>
-      <div class="cctv-content" id="cctv-content"></div>
+      <!-- 角色選擇 -->
+      <div class="cctv-char-select-row" id="cctv-char-row" style="padding:0.5rem 0.8rem;"></div>
+      <!-- 場景設定 -->
+      <div style="padding:0.6rem 1rem;border-bottom:1px solid rgba(201,184,232,0.15);flex-shrink:0;">
+        <textarea id="spell-stage-scenario" placeholder="輸入場景設定（咒語）... 例：我們在一個下午的咖啡廳，你剛失去工作，我來安慰你..." 
+          style="width:100%;min-height:70px;max-height:120px;resize:vertical;border:1.5px solid var(--lavender-light);border-radius:12px;padding:0.6rem 0.9rem;font-family:inherit;font-size:0.83rem;color:var(--text-dark);background:var(--lavender-soft);outline:none;line-height:1.5;"></textarea>
+        <button onclick="startSpellStage()" style="margin-top:0.4rem;width:100%;padding:0.6rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:12px;color:white;font-family:inherit;font-size:0.88rem;cursor:pointer;font-weight:500;">✨ 開始小劇場</button>
+      </div>
+      <!-- 對話區 -->
+      <div id="spell-stage-messages" style="flex:1;overflow-y:auto;padding:1rem;">
+        <div style="text-align:center;padding:3rem 1rem;color:var(--text-light);font-size:0.85rem;">選擇角色，輸入場景後按「開始小劇場」<br><span style="font-size:0.75rem;opacity:0.7">此頁面不套用 regex，可閱讀完整長篇回覆</span></div>
+      </div>
+      <!-- 對話輸入 -->
+      <div style="padding:0.6rem 1rem 0.8rem;border-top:1px solid rgba(201,184,232,0.2);background:var(--header-bg);flex-shrink:0;">
+        <div style="display:flex;gap:0.5rem;align-items:flex-end;">
+          <textarea id="spell-stage-input" placeholder="繼續對話... (Ctrl+Enter 送出)" rows="2"
+            onkeydown="handleSpellStageKey(event)"
+            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'"
+            style="flex:1;border:1.5px solid var(--lavender-light);border-radius:14px;padding:0.65rem 0.9rem;font-family:inherit;font-size:0.88rem;color:var(--text-dark);background:var(--lavender-soft);outline:none;resize:none;line-height:1.5;"></textarea>
+          <button onclick="sendSpellStageMsg()" style="width:42px;height:42px;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:14px;color:white;font-size:1.1rem;cursor:pointer;flex-shrink:0;">➤</button>
+        </div>
+      </div>
     </div>
 
     <!-- SETTINGS PAGE -->
@@ -1401,6 +1420,28 @@ body {
         </div>
       </div>
       
+      <div class="settings-section">
+        <div class="settings-section-title">角色自動傳訊</div>
+        <div class="settings-item">
+          <div class="settings-item-icon" style="background:var(--lavender-soft)">💬</div>
+          <div class="settings-item-label">超時自動傳訊</div>
+          <div class="toggle-switch" id="automsg-toggle" onclick="toggleAutoMsg()"></div>
+        </div>
+        <div class="settings-item" style="cursor:default;">
+          <div class="settings-item-icon" style="background:var(--milk-blue-soft)">⏱️</div>
+          <div class="settings-item-label">無回覆幾小時後自動發</div>
+          <input type="number" id="automsg-hours-input" min="1" max="24" value="3"
+            onchange="saveAutoMsgHours()"
+            style="width:56px;border:1.5px solid var(--lavender-light);border-radius:8px;padding:0.3rem 0.5rem;font-family:inherit;font-size:0.85rem;color:var(--text-dark);background:var(--lavender-soft);text-align:center;outline:none;">
+          <span style="font-size:0.78rem;color:var(--text-light);">小時</span>
+        </div>
+        <div class="settings-item" onclick="triggerAutoMsgNow()" style="cursor:pointer;">
+          <div class="settings-item-icon" style="background:#f0fff0">📨</div>
+          <div class="settings-item-label">立即讓角色傳一則訊息</div>
+          <div class="settings-item-arrow">›</div>
+        </div>
+      </div>
+
       <div class="settings-section">
         <div class="settings-section-title">現實連動</div>
         <div class="settings-item">
@@ -1497,7 +1538,7 @@ body {
     <span class="icon">📔</span><span>日記</span>
   </button>
   <button class="bottom-nav-btn" onclick="switchPage('cctv')" id="bnav-cctv">
-    <span class="icon">📹</span><span>監視器</span>
+    <span class="icon">✨</span><span>咒語</span>
   </button>
   <button class="bottom-nav-btn" onclick="switchPage('settings')" id="bnav-settings">
     <span class="icon">⚙️</span><span>設定</span>
@@ -1506,10 +1547,10 @@ body {
 
 <!-- ─── MODALS ─── -->
 
-<!-- ADD CHAR MODAL -->
+<!-- ADD / EDIT CHAR MODAL -->
 <div class="modal-overlay" id="add-char-modal">
   <div class="modal">
-    <div class="modal-title">🌸 新增角色</div>
+    <div class="modal-title" id="add-char-modal-title">🌸 新增角色</div>
     <div class="modal-tabs">
       <button class="modal-tab active" onclick="switchModalTab(this,'char-manual')">手動建立</button>
       <button class="modal-tab" onclick="switchModalTab(this,'char-import')">匯入角色卡</button>
@@ -1520,8 +1561,17 @@ body {
         <input class="modal-input" id="char-name-input" placeholder="例：小雨">
       </div>
       <div class="modal-field">
-        <label class="modal-label">頭像 (emoji 或圖片URL)</label>
-        <input class="modal-input" id="char-avatar-input" placeholder="🌸 或 https://...">
+        <label class="modal-label">頭像</label>
+        <div style="display:flex;align-items:center;gap:0.7rem;margin-bottom:0.5rem;">
+          <div id="char-avatar-preview" style="width:48px;height:48px;border-radius:14px;background:var(--lavender-soft);border:1.5px solid var(--lavender-light);display:flex;align-items:center;justify-content:center;font-size:1.8rem;overflow:hidden;flex-shrink:0;"></div>
+          <div style="flex:1;">
+            <input class="modal-input" id="char-avatar-input" placeholder="🌸 或貼上圖片 URL" style="margin-bottom:0.4rem;">
+            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;font-size:0.78rem;color:var(--text-mid);background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:10px;padding:0.35rem 0.7rem;width:fit-content;">
+              📷 上傳圖片
+              <input type="file" accept="image/*" style="display:none" onchange="handleAvatarUpload(event)">
+            </label>
+          </div>
+        </div>
       </div>
       <div class="modal-field">
         <label class="modal-label">角色描述 (Character Card)</label>
@@ -1550,9 +1600,10 @@ body {
         </label>
       </div>
     </div>
-    <div class="modal-actions">
-      <button class="modal-btn secondary" onclick="closeModal('add-char-modal')">取消</button>
-      <button class="modal-btn primary" onclick="saveChar()">建立角色</button>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:0.4rem;">
+      <button class="modal-btn secondary" onclick="closeModal('add-char-modal')" style="flex:1;min-width:80px;">取消</button>
+      <button id="delete-char-btn" class="modal-btn secondary" onclick="deleteCharFromModal()" style="flex:1;min-width:80px;color:#e87878;display:none;">🗑️ 刪除角色</button>
+      <button id="save-char-btn" class="modal-btn primary" onclick="saveChar()" style="flex:2;min-width:100px;">建立角色</button>
     </div>
   </div>
 </div>
@@ -1706,10 +1757,6 @@ body {
         <option value="selfie">自拍風格</option>
       </select>
     </div>
-    <div class="modal-field">
-      <label class="modal-label">讓其他角色回覆（最多回覆數）</label>
-      <input class="modal-input" type="number" id="reply-limit-input" value="3" min="0" max="10">
-    </div>
     <div class="modal-actions">
       <button class="modal-btn secondary" onclick="closeModal('social-compose-modal')">取消</button>
       <button class="modal-btn primary" onclick="aiPostSocial()">發布</button>
@@ -1743,9 +1790,10 @@ body {
         <button class="modal-btn secondary" onclick="exportChatAsST()">匯出為 ST 格式</button>
       </div>
     </div>
-    <div class="modal-actions">
-      <button class="modal-btn secondary" onclick="closeModal('char-info-modal')">關閉</button>
-      <button class="modal-btn primary" onclick="editChar()">編輯角色</button>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:0.4rem;">
+      <button class="modal-btn secondary" onclick="closeModal('char-info-modal')" style="flex:1;">關閉</button>
+      <button class="modal-btn secondary" onclick="deleteChar(state.activeCharId)" style="flex:1;color:#e87878;">🗑️ 刪除角色</button>
+      <button class="modal-btn primary" onclick="editChar()" style="flex:2;">✏️ 編輯角色</button>
     </div>
   </div>
 </div>

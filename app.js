@@ -2174,7 +2174,7 @@ ${currentSocialTab === 'plurk' ? '可以加幾個 hashtag，放在最後。' : '
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-        generationConfig: { temperature: 1.0, maxOutputTokens: 2048 }
+        generationConfig: { temperature: 1.0, maxOutputTokens: 5000 }
       })
     });
     const data = await res.json();
@@ -2520,7 +2520,7 @@ ${anniversaryContext ? `${anniversaryContext}\n` : ''}
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 1.1, maxOutputTokens: 2048 }
+          generationConfig: { temperature: 1.1, maxOutputTokens: 5000 }
         })
       });
 

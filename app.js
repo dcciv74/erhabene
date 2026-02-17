@@ -631,11 +631,6 @@ async function sendMessage() {
     const responses = await callGemini(state.activeChat, text || '（圖片）', null, imagesToSend);
     hideTyping();
     for (let i = 0; i < responses.length; i++) {
-      // 模擬真實打字速度：每個中文字約 60ms，加上基礎延遲，讓多段訊息有節奏感
-      const msgLen = responses[i].length;
-      const typingDelay = Math.min(300 + msgLen * 55, 2200) + Math.random() * 300;
-      await delay(typingDelay);
-      addAIMessage(state.activeChat, responses[i]);
       // 不是最後一則才顯示 typing indicator
       if (i < responses.length - 1) {
         showTyping();

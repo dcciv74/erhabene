@@ -454,8 +454,8 @@ function renderMessages(chatId) {
       let avatarHtml = '';
       if (group.role === 'ai') {
         const av = char?.avatar;
-        const isImgSrc = av?.startsWith('http') || av?.startsWith('data:');
-        const avContent = isImgSrc ? `<img src="${av}" alt="">` : (av || '🌸');
+        const avIsImg = isImgSrc(av);
+        const avContent = avIsImg ? `<img src="${av}" alt="">` : (av || '🌸');
         avatarHtml = idx === 0
           ? `<div class="msg-avatar">${avContent}</div>`
           : `<div class="msg-avatar-spacer"></div>`;
@@ -539,20 +539,84 @@ function addUserMessage(chatId, content) {
   return msg;
 }
 
+// ─── CHAT IMAGE UPLOAD ──────────────────────────────
+let pendingChatImages = []; // [{base64, mimeType}]
+
+function handleChatImageUpload(event) {
+  const files = [...event.target.files];
+  event.target.value = ''; // reset so same file can be re-selected
+  files.forEach(file => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const dataUrl = e.target.result;
+      const mimeType = file.type;
+      const base64 = dataUrl.split(',')[1];
+      pendingChatImages.push({ base64, mimeType, dataUrl });
+      renderChatImgPreviewStrip();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderChatImgPreviewStrip() {
+  const strip = document.getElementById('chat-img-preview-strip');
+  if (!strip) return;
+  if (pendingChatImages.length === 0) {
+    strip.style.display = 'none';
+    strip.innerHTML = '';
+    return;
+  }
+  strip.style.display = 'flex';
+  strip.innerHTML = pendingChatImages.map((img, i) => `
+    <div class="chat-img-thumb">
+      <img src="${img.dataUrl}" alt="圖片${i+1}">
+      <button class="thumb-del" onclick="removePendingImg(${i})" title="移除">×</button>
+    </div>
+  `).join('') + `<span style="font-size:0.72rem;color:var(--text-light);align-self:center;">${pendingChatImages.length} 張圖片</span>`;
+}
+
+function removePendingImg(idx) {
+  pendingChatImages.splice(idx, 1);
+  renderChatImgPreviewStrip();
+}
+
 async function sendMessage() {
   if (!state.activeChat) return;
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
-  if (!text) return;
+  const hasImages = pendingChatImages.length > 0;
+  if (!text && !hasImages) return;
   input.value = '';
   input.style.height = 'auto';
 
-  addUserMessage(state.activeChat, text);
-  updateChatStats(state.activeCharId); // track stats
+  // Show user's images in chat
+  const imagesToSend = [...pendingChatImages];
+  pendingChatImages = [];
+  renderChatImgPreviewStrip();
+
+  // Display user message with images
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+
+  if (imagesToSend.length > 0) {
+    // Add each image as a user message
+    imagesToSend.forEach(img => {
+      const msg = { id: uid(), role: 'user', content: text || '（圖片）', type: 'image', imageUrl: img.dataUrl, time: Date.now() };
+      chat.messages.push(msg);
+    });
+    // If also text, add after images (combined into first msg already)
+    dbPut('chats', chat);
+    renderMessages(state.activeChat);
+  } else if (text) {
+    addUserMessage(state.activeChat, text);
+  }
+
+  updateChatStats(state.activeCharId);
   showTyping();
 
   try {
-    const responses = await callGemini(state.activeChat, text);
+    const responses = await callGemini(state.activeChat, text || '（圖片）', null, imagesToSend);
     hideTyping();
     for (let i = 0; i < responses.length; i++) {
       await delay(400 + Math.random() * 600);
@@ -567,7 +631,7 @@ async function sendMessage() {
 }
 
 // ─── GEMINI API ─────────────────────────────────────
-async function callGemini(chatId, userMessage, overrideSystem = null) {
+async function callGemini(chatId, userMessage, overrideSystem = null, userImages = []) {
   const chat = state.chats.find(c => c.id === chatId);
   const char = state.chars.find(c => c.id === chat.charId);
   const persona = char?.personaId ? state.personas.find(p => p.id === char.personaId) : null;
@@ -613,11 +677,19 @@ async function callGemini(chatId, userMessage, overrideSystem = null) {
 
   // Jailbreak before last
   let contents = [...history];
-  if (state.jailbreak && state.jailbreakPosition === 'before_last') {
-    contents.push({ role: 'user', parts: [{ text: state.jailbreak + '\n\n' + userMessage }] });
-  } else {
-    contents.push({ role: 'user', parts: [{ text: userMessage }] });
+  // Build last user message parts (text + optional images)
+  const lastUserParts = [];
+  if (userImages && userImages.length > 0) {
+    userImages.forEach(img => {
+      lastUserParts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
+    });
   }
+  if (state.jailbreak && state.jailbreakPosition === 'before_last') {
+    lastUserParts.push({ text: state.jailbreak + '\n\n' + userMessage });
+  } else {
+    lastUserParts.push({ text: userMessage });
+  }
+  contents.push({ role: 'user', parts: lastUserParts });
 
   const body = {
     system_instruction: { parts: [{ text: systemInstruction }] },
@@ -1103,7 +1175,8 @@ function renderLorebookCount() {
 }
 
 function lbSaveEntry(id) {
-  const e = state.lorebook.find(l => l.id === id);
+  const entries = _getLbStore();
+  const e = entries.find(l => l.id === id);
   if (!e) return;
   e.name    = document.getElementById('lb-name-'+id)?.value.trim() || '';
   e.keys    = (document.getElementById('lb-keys-'+id)?.value||'').split(',').map(k=>k.trim()).filter(Boolean);
@@ -1190,6 +1263,12 @@ function renderPersonaList() {
 let editingPersonaId = null;
 
 function openAddPersonaPanel() {
+  // Ensure the persona modal is open first
+  const modal = document.getElementById('persona-modal');
+  if (!modal.classList.contains('open')) {
+    modal.classList.add('open');
+    renderPersonaList();
+  }
   editingPersonaId = null;
   document.getElementById('persona-panel-title').textContent = '＋ 新增 Persona';
   document.getElementById('persona-name-input').value = '';
@@ -1198,6 +1277,11 @@ function openAddPersonaPanel() {
   delete document.getElementById('persona-avatar-file').dataset.base64;
   _renderPersonaCharCheckboxes(null);
   document.getElementById('persona-edit-panel').style.display = 'block';
+  // Scroll edit panel into view
+  setTimeout(() => {
+    document.getElementById('persona-edit-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.getElementById('persona-name-input')?.focus();
+  }, 60);
 }
 
 function openEditPersonaPanel(id) {
@@ -2112,10 +2196,26 @@ async function loadDiaryForDate(dateStr) {
     return;
   }
 
+  // Build character checkboxes for selection
+  const charCheckboxesHtml = state.chars.map(c => {
+    const avHtmlStr = isImgSrc(c.avatar)
+      ? `<img src="${c.avatar}" style="width:22px;height:22px;border-radius:7px;object-fit:cover;vertical-align:middle;margin-right:4px;">`
+      : `<span style="margin-right:4px;">${c.avatar || '🌸'}</span>`;
+    return `<label style="display:flex;align-items:center;gap:0.3rem;padding:0.3rem 0.6rem;background:rgba(255,255,255,0.8);border:1px solid rgba(201,184,232,0.2);border-radius:10px;cursor:pointer;font-size:0.8rem;color:var(--text-dark);">
+      <input type="checkbox" class="diary-char-check" value="${c.id}" checked style="accent-color:var(--lavender);">${avHtmlStr}${c.name}
+    </label>`;
+  }).join('');
+
   content.innerHTML = `
     <div style="text-align:center;padding:2rem 1rem;">
       <div style="font-size:1.5rem;margin-bottom:0.8rem;">📔</div>
       <div style="font-size:0.88rem;color:var(--text-mid);margin-bottom:1.2rem;">${dateStr} 的日記尚未生成</div>
+      <div style="margin-bottom:1rem;text-align:left;">
+        <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:0.5rem;letter-spacing:0.05em;text-align:center;">選擇要生成日記的角色</div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.4rem;justify-content:center;" id="diary-char-picker">
+          ${charCheckboxesHtml}
+        </div>
+      </div>
       <div style="margin-bottom:1.2rem;">
         <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:0.5rem;letter-spacing:0.05em;">選擇文風</div>
         <div style="display:flex;flex-wrap:wrap;gap:0.4rem;justify-content:center;" id="diary-style-picker">
@@ -2161,6 +2261,14 @@ async function generateDiary(dateStr, styleOverride) {
   const diaryStyle = styleOverride || state.diaryStyle || 'default';
   showToast('📔 生成日記中...');
 
+  // Get selected chars from checkboxes (if UI present), else all
+  const checkboxes = document.querySelectorAll('#diary-char-picker .diary-char-check:checked');
+  const selectedIds = checkboxes.length > 0
+    ? [...checkboxes].map(cb => cb.value)
+    : state.chars.map(c => c.id);
+
+  const charsToGenerate = state.chars.filter(c => selectedIds.includes(c.id));
+
   const stylePromptMap = {
     default: '文風自然真摯，像真人在寫的私密日記，充滿細節與情感，有起伏有感悟。',
     dark:    '文風陰暗、壓抑、帶著憂鬱與疏離感，如文學作品般沉重，充滿內心掙扎與黑暗獨白，帶著詩意的黑暗。',
@@ -2170,7 +2278,7 @@ async function generateDiary(dateStr, styleOverride) {
   };
   const stylePrompt = stylePromptMap[diaryStyle] || stylePromptMap.default;
 
-  for (const char of state.chars) {
+  for (const char of charsToGenerate) {
     if (state.diaryEntries[char.id]?.[dateStr]) continue;
 
     try {

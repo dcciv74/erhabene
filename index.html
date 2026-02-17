@@ -436,7 +436,28 @@ body {
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* ─── INPUT AREA ─── */
+/* ─── CHAT IMAGE UPLOAD ─── */
+.chat-img-thumb {
+  position: relative;
+  width: 52px; height: 52px;
+  border-radius: 10px;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(201,184,232,0.4);
+}
+.chat-img-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.chat-img-thumb .thumb-del {
+  position: absolute; top: 2px; right: 2px;
+  width: 18px; height: 18px;
+  background: rgba(60,40,80,0.7);
+  border: none; border-radius: 50%;
+  color: white; font-size: 0.65rem;
+  cursor: pointer; display: flex;
+  align-items: center; justify-content: center;
+  line-height: 1;
+}
+
+
 #input-area {
   padding: 0.8rem 1rem;
   background: var(--header-bg);
@@ -1549,11 +1570,15 @@ body {
       <div id="input-area" style="display:none;">
         <div class="input-toolbar">
           <button class="toolbar-btn" onclick="triggerImageGen()" title="生成圖片">🖼️</button>
+          <button class="toolbar-btn" onclick="document.getElementById('chat-img-upload').click()" title="上傳圖片">📷</button>
+          <input type="file" id="chat-img-upload" accept="image/*" style="display:none" onchange="handleChatImageUpload(event)">
           <button class="toolbar-btn" onclick="openStickerPicker()" title="(表情)">🎭</button>
           <button class="toolbar-btn" onclick="openModal('preset-modal')" title="Preset">📋</button>
           <button class="toolbar-btn" id="memory-toggle-btn" onclick="toggleMemoryPanel()" title="記憶">🧠</button>
           <button class="toolbar-btn" onclick="triggerAutoMsgNow()" title="讓角色立刻傳訊息" style="margin-left:auto;">💬✨</button>
         </div>
+        <!-- Image preview strip -->
+        <div id="chat-img-preview-strip" style="display:none;padding:0.4rem 0;display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;"></div>
         <div class="input-row">
           <textarea id="msg-input" placeholder="傳訊息..." rows="1"
             onkeydown="handleInputKey(event)"
@@ -1960,7 +1985,7 @@ body {
   <div class="modal" style="width:min(560px,96vw);max-height:90dvh;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.2rem;">
       <div class="modal-title" style="margin:0;">🎭 我的 Persona</div>
-      <button onclick="openAddPersonaPanel()" style="padding:0.4rem 0.9rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:10px;color:white;font-family:inherit;font-size:0.78rem;cursor:pointer;">＋ 新增</button>
+      <button onclick="openAddPersonaPanel()" style="padding:0.4rem 0.9rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:10px;color:white;font-family:inherit;font-size:0.78rem;cursor:pointer;" id="persona-add-btn">＋ 新增</button>
     </div>
     <!-- Persona List -->
     <div id="persona-list" style="max-height:calc(90dvh - 220px);overflow-y:auto;display:flex;flex-direction:column;gap:0.6rem;margin-bottom:1rem;"></div>

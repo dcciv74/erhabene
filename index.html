@@ -586,44 +586,35 @@ body {
 }
 .char-add-card:hover { border-color: var(--lavender); color: var(--text-mid); background: rgba(201,184,232,0.1); }
 
-/* ─── SOCIAL PAGE ─── */
-#social-page { background: var(--beige-soft); }
-
-/* 角色篩選 tab 列 */
-.social-char-tabs {
-  display: flex;
-  padding: 0 0.6rem;
-  gap: 0.3rem;
-  border-bottom: 1px solid rgba(201,184,232,0.2);
+/* ─── SHARED: Char Filter Tabs ─── */
+.char-filter-tabs {
+  display: flex; padding: 0 0.4rem; gap: 0.2rem;
   background: var(--header-bg);
-  flex-shrink: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  border-bottom: 1px solid rgba(201,184,232,0.2);
+  flex-shrink: 0; overflow-x: auto; scrollbar-width: none;
 }
-.social-char-tabs::-webkit-scrollbar { display: none; }
-.social-char-tab {
-  display: flex; align-items: center; gap: 0.4rem;
-  padding: 0.75rem 0.9rem;
+.char-filter-tabs::-webkit-scrollbar { display: none; }
+.cft-btn {
+  display: flex; align-items: center; gap: 0.32rem;
+  padding: 0.65rem 0.8rem;
   border: none; background: none;
-  font-family: inherit; font-size: 0.82rem;
+  font-family: inherit; font-size: 0.8rem;
   color: var(--text-light); cursor: pointer;
   border-bottom: 2.5px solid transparent;
-  transition: all 0.18s;
   white-space: nowrap; flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
 }
-.social-char-tab .tab-avatar {
-  width: 22px; height: 22px; border-radius: 7px;
-  background: linear-gradient(135deg, var(--lavender), var(--milk-blue));
+.cft-btn.active { color: var(--lavender); border-bottom-color: var(--lavender); font-weight: 500; }
+.cft-av {
+  width: 19px; height: 19px; border-radius: 6px;
+  background: linear-gradient(135deg,var(--lavender),var(--milk-blue));
   display: flex; align-items: center; justify-content: center;
-  font-size: 0.72rem; overflow: hidden; flex-shrink: 0;
+  font-size: 0.65rem; overflow: hidden; flex-shrink: 0;
 }
-.social-char-tab .tab-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.social-char-tab.active {
-  color: var(--lavender);
-  border-bottom-color: var(--lavender);
-  font-weight: 500;
-}
+.cft-av img { width: 100%; height: 100%; object-fit: cover; }
 
+/* ─── SOCIAL PAGE ─── */
+#social-page { background: var(--beige-soft); }
 .social-feed { flex: 1; overflow-y: auto; padding: 1rem; }
 
 .post-card {
@@ -660,11 +651,9 @@ body {
 }
 .post-action-btn:hover { color: var(--lavender); }
 
-/* 留言區 */
 .post-comments { margin-top: 0.7rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .comment-item {
   display: flex; gap: 0.6rem; align-items: flex-start;
-  position: relative;
 }
 .comment-avatar {
   width: 28px; height: 28px; border-radius: 9px;
@@ -672,7 +661,6 @@ body {
   display: flex; align-items: center; justify-content: center;
   font-size: 0.8rem; flex-shrink: 0;
 }
-.comment-body { flex: 1; min-width: 0; }
 .comment-bubble {
   background: var(--lavender-soft);
   border-radius: 4px 14px 14px 14px;
@@ -680,44 +668,65 @@ body {
   font-size: 0.82rem; color: var(--text-dark);
   line-height: 1.5;
 }
-.comment-bubble.editing {
-  padding: 0.4rem;
-  background: white;
-  border: 1.5px solid var(--lavender-light);
-}
 .comment-name { font-weight: 500; font-size: 0.75rem; color: var(--lavender); margin-bottom: 0.1rem; }
+
+/* ─── Comment actions (edit / delete) ─── */
+.comment-item { position: relative; }
+.comment-body { flex: 1; min-width: 0; }
 .comment-actions {
-  display: flex; gap: 0.3rem; margin-top: 0.25rem;
-  opacity: 0; transition: opacity 0.15s;
+  display: flex; gap: 0.22rem; margin-top: 0.18rem;
+  opacity: 0; transition: opacity 0.13s;
 }
 .comment-item:hover .comment-actions { opacity: 1; }
-/* mobile 常駐顯示 */
-@media (hover: none) {
-  .comment-actions { opacity: 1; }
-}
-.comment-action-btn {
+@media (hover: none) { .comment-actions { opacity: 1; } }
+.cmt-act-btn {
   background: none; border: none; cursor: pointer;
-  font-size: 0.7rem; color: var(--text-light);
-  padding: 0.1rem 0.35rem; border-radius: 6px;
-  font-family: inherit; transition: background 0.12s, color 0.12s;
+  font-size: 0.68rem; color: var(--text-light);
+  padding: 0.06rem 0.28rem; border-radius: 5px;
+  font-family: inherit; transition: background 0.1s, color 0.1s;
 }
-.comment-action-btn:hover { background: var(--lavender-light); color: var(--text-dark); }
-.comment-action-btn.danger:hover { background: rgba(220,80,80,0.12); color: #c04040; }
-.comment-edit-area {
-  width: 100%; border: none; outline: none; resize: none;
-  font-family: inherit; font-size: 0.82rem; color: var(--text-dark);
-  background: transparent; line-height: 1.5; padding: 0.1rem 0;
-  min-height: 2em;
+.cmt-act-btn:hover { background: var(--lavender-light); color: var(--text-dark); }
+.cmt-act-btn.del:hover { background: rgba(220,80,80,0.12); color: #c04040; }
+.cmt-edit-ta {
+  width: 100%; border: 1.5px solid var(--lavender-light); border-radius: 8px;
+  outline: none; resize: none; font-family: inherit;
+  font-size: 0.82rem; color: var(--text-dark);
+  background: white; line-height: 1.5; padding: 0.25rem 0.45rem;
+  min-height: 2.3em;
 }
-.comment-edit-row {
-  display: flex; gap: 0.4rem; margin-top: 0.3rem;
+.cmt-edit-row { display: flex; gap: 0.3rem; margin-top: 0.25rem; }
+.cmt-edit-save {
+  padding: 0.18rem 0.62rem; background: var(--lavender); color: white;
+  border: none; border-radius: 8px; font-family: inherit;
+  font-size: 0.73rem; cursor: pointer;
 }
-.comment-edit-btn {
-  padding: 0.22rem 0.7rem; border: none; border-radius: 8px;
-  font-family: inherit; font-size: 0.75rem; cursor: pointer;
+.cmt-edit-cancel {
+  padding: 0.18rem 0.62rem; background: var(--lavender-soft); color: var(--text-mid);
+  border: 1px solid var(--lavender-light); border-radius: 8px;
+  font-family: inherit; font-size: 0.73rem; cursor: pointer;
 }
-.comment-edit-btn.save { background: var(--lavender); color: white; }
-.comment-edit-btn.cancel { background: var(--lavender-soft); color: var(--text-mid); border: 1px solid var(--lavender-light); }
+
+/* ─── Theater history ─── */
+.th-item {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  padding: 0.55rem 0.7rem; border-radius: 12px;
+  border: 1px solid rgba(201,184,232,0.22);
+  background: var(--lavender-soft);
+  margin-bottom: 0.4rem; cursor: pointer;
+  transition: border-color 0.13s, background 0.13s;
+}
+.th-item:hover { border-color: var(--lavender); background: var(--lavender-light); }
+.th-item-body { flex: 1; min-width: 0; }
+.th-meta { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.18rem; }
+.th-style { font-size: 0.7rem; color: var(--lavender); font-weight: 500; }
+.th-date { font-size: 0.68rem; color: var(--text-light); margin-left: auto; }
+.th-del {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-light); font-size: 0.82rem; padding: 0 0.12rem;
+  border-radius: 4px; flex-shrink: 0; line-height: 1;
+}
+.th-del:hover { background: rgba(220,80,80,0.12); color: #c04040; }
+.th-prompt { font-size: 0.78rem; color: var(--text-mid); line-height: 1.4; }
 
 .post-compose {
   background: rgba(255,255,255,0.88);
@@ -1698,8 +1707,7 @@ body {
 
     <!-- SOCIAL PAGE -->
     <div class="page" id="social-page">
-      <!-- 角色篩選 tab 列（動態產生） -->
-      <div class="social-char-tabs" id="social-char-tabs"></div>
+      <div class="char-filter-tabs" id="social-char-tabs"></div>
       <div class="social-feed" id="social-feed"></div>
     </div>
 
@@ -1710,6 +1718,7 @@ body {
         <div class="diary-month" id="diary-month-label"></div>
         <button class="diary-nav-btn" onclick="changeMonth(1)">›</button>
       </div>
+      <div class="char-filter-tabs" id="diary-char-tabs"></div>
       <div class="diary-calendar" id="diary-calendar"></div>
       <div class="diary-content" id="diary-content">
         <div class="diary-empty">點擊日期查看角色日記</div>
@@ -1722,10 +1731,11 @@ body {
         <div style="font-size:1rem;font-weight:700;color:var(--text-dark);">🎭 小劇場</div>
         <div style="font-size:0.72rem;color:var(--text-light);">獨立敘事・不影響聊天</div>
       </div>
+      <div class="char-filter-tabs" id="theater-char-tabs"></div>
       <div style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:1rem;">
-        <div style="background:rgba(255,255,255,0.88);border-radius:20px;padding:1.2rem;box-shadow:0 2px 10px var(--shadow);border:1px solid rgba(201,184,232,0.12);">
+        <div id="theater-compose-panel" style="background:rgba(255,255,255,0.88);border-radius:20px;padding:1.2rem;box-shadow:0 2px 10px var(--shadow);border:1px solid rgba(201,184,232,0.12);">
           <div class="modal-label" style="margin-bottom:0.6rem;">選擇角色</div>
-          <select class="modal-select" id="theater-char-select" style="margin-bottom:0.8rem;"></select>
+          <select class="modal-select" id="theater-char-select" style="margin-bottom:0.8rem;" onchange="syncTheaterTabFromSelect(this.value)"></select>
           <div class="modal-label" style="margin-bottom:0.6rem;">劇場情境描述</div>
           <textarea class="modal-textarea" id="theater-prompt" style="min-height:90px;margin-bottom:0.8rem;" placeholder="例：我們在咖啡廳突然下起大雨，被迫長時間等待...&#10;例：角色在我不知情的情況下一直暗戀著我...&#10;例：我生氣了，角色試圖哄我..."></textarea>
           <div class="modal-label" style="margin-bottom:0.6rem;">文風</div>
@@ -1745,6 +1755,10 @@ body {
             <button onclick="regenerateTheater()" class="diary-regen-btn">🔄 重新生成</button>
           </div>
           <div id="theater-result-text" style="font-size:0.9rem;color:var(--text-dark);line-height:1.9;white-space:pre-wrap;"></div>
+        </div>
+        <div style="background:rgba(255,255,255,0.88);border-radius:20px;padding:1.2rem;box-shadow:0 2px 10px var(--shadow);border:1px solid rgba(201,184,232,0.12);">
+          <div style="font-size:0.82rem;font-weight:600;color:var(--text-mid);margin-bottom:0.7rem;">📚 已儲存的小劇場</div>
+          <div id="theater-history-list"><div style="font-size:0.8rem;color:var(--text-light);text-align:center;padding:0.8rem 0;">選擇角色後顯示歷史記錄</div></div>
         </div>
       </div>
     </div>

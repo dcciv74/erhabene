@@ -51,6 +51,8 @@ Stay in character. Be warm, casual, and emotionally real.`,
   achievements: {},  // {charId: {generated: [{id,name,desc,icon,condition,unlocked}], stats}}
   theaterStyle: 'romantic',
   theaterLastPrompt: '',
+  theaterEntries: {}, // { charId: [{id,prompt,style,text,time}] }
+  diaryCharFilter: 'all',   // 'all' | charId
   chatStats: {},    // {charId: {days: Set, messages: 0, startDate}}
 };
 
@@ -60,7 +62,7 @@ function initDB() {
     const req = indexedDB.open('erhabene', 4);
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats'];
+      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries'];
       ALL_STORES.forEach(store => {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store, { keyPath: 'id' });
@@ -130,6 +132,11 @@ async function loadAllData() {
   try {
     const dAll = await dbGetAll('diaryEntries');
     dAll.forEach(d => { state.diaryEntries[d.id] = d.entries; });
+  } catch(e) {}
+  // load theaterEntries
+  try {
+    const tAll = await dbGetAll('theaterEntries');
+    tAll.forEach(t => { state.theaterEntries[t.id] = t.entries; });
   } catch(e) {}
 
   // load achievements
@@ -2095,34 +2102,29 @@ function downloadJSON(data, filename) {
 function updateSpellCharSelect() { /* no-op, spell panel removed */ }
 
 // ─── SOCIAL ─────────────────────────────────────────
-// ─── SOCIAL FEED ──────────────────────────────────────
-let currentSocialCharFilter = 'all'; // 'all' | charId
+// ─── SOCIAL CHAR FILTER ────────────────────────────
+let currentSocialCharFilter = 'all';
 
 function renderSocialCharTabs() {
-  const tabs = document.getElementById('social-char-tabs');
-  if (!tabs) return;
-
-  // 「全部」+ 每個角色
+  const el = document.getElementById('social-char-tabs');
+  if (!el) return;
   const items = [
-    { id: 'all', name: '全部', avatar: null },
-    ...state.chars.map(c => ({ id: c.id, name: c.name, avatar: c.avatar })),
+    { id: 'all',  label: '🌊 全部' },
+    { id: 'mine', label: '📝 我的' },
+    ...state.chars.map(c => ({ id: c.id, label: c.name, avatar: c.avatar })),
   ];
-
-  tabs.innerHTML = items.map(item => {
-    const isActive = item.id === currentSocialCharFilter;
+  el.innerHTML = items.map(it => {
+    const act = it.id === currentSocialCharFilter ? ' active' : '';
     let avHtml = '';
-    if (item.id === 'all') {
-      avHtml = `<div class="tab-avatar" style="background:linear-gradient(135deg,var(--lavender),var(--milk-blue));">🌊</div>`;
-    } else {
-      const av = item.avatar;
-      avHtml = `<div class="tab-avatar">${isImgSrc(av) ? `<img src="${av}">` : (av || '🌸')}</div>`;
+    if (it.avatar !== undefined) {
+      avHtml = `<span class="cft-av">${isImgSrc(it.avatar)?`<img src="${it.avatar}">`:( it.avatar||'🌸')}</span>`;
     }
-    return `<button class="social-char-tab${isActive ? ' active' : ''}" onclick="switchSocialCharTab('${item.id}')">${avHtml}${item.name}</button>`;
+    return `<button class="cft-btn${act}" onclick="switchSocialCharTab('${it.id}')">${avHtml}${it.label}</button>`;
   }).join('');
 }
 
-function switchSocialCharTab(charId) {
-  currentSocialCharFilter = charId;
+function switchSocialCharTab(id) {
+  currentSocialCharFilter = id;
   renderSocialCharTabs();
   renderSocialFeed();
 }
@@ -2130,13 +2132,17 @@ function switchSocialCharTab(charId) {
 function renderSocialFeed() {
   renderSocialCharTabs();
   const feed = document.getElementById('social-feed');
-
   let posts = [...state.socialPosts].sort((a, b) => b.time - a.time);
-  if (currentSocialCharFilter !== 'all') {
-    posts = posts.filter(p => p.charId === currentSocialCharFilter || p.authorName === 'You');
+  if (currentSocialCharFilter === 'mine') {
+    posts = posts.filter(p => !p.charId);
+  } else if (currentSocialCharFilter !== 'all') {
+    posts = posts.filter(p => p.charId === currentSocialCharFilter);
   }
 
-  let html = `
+  let html = '';
+
+  // Compose area
+  html += `
     <div class="post-compose">
       <textarea class="compose-input" id="compose-input" placeholder="分享這一刻..."></textarea>
       <div class="compose-actions">
@@ -2157,37 +2163,37 @@ function renderSocialFeed() {
   } else {
     html += '<div class="plurk-timeline">';
     posts.forEach(post => {
-      const char = state.chars.find(c => c.id === post.charId);
-      const av = char?.avatar;
-      const avHtml = isImgSrc(av) ? `<img src="${av}">` : (av || '🌊');
-      html += `
-        <div class="plurk-item">
-          <div class="plurk-dot"></div>
-          <div class="post-card">
-            <div class="post-header">
-              <div class="post-avatar">${avHtml}</div>
-              <div>
-                <div class="post-author">${post.authorName || char?.name || 'You'}</div>
-                <div class="post-time">${formatTime(post.time)}</div>
+        const char = state.chars.find(c => c.id === post.charId);
+        const av = char?.avatar;
+        const avHtml = isImgSrc(av) ? `<img src="${av}">` : (av || '🌊');
+        html += `
+          <div class="plurk-item">
+            <div class="plurk-dot"></div>
+            <div class="post-card">
+              <div class="post-header">
+                <div class="post-avatar">${avHtml}</div>
+                <div>
+                  <div class="post-author">${post.authorName || char?.name || 'User'}</div>
+                  <div class="post-time">${formatTime(post.time)}</div>
+                </div>
               </div>
-            </div>
-            <div class="post-content">${post.content}</div>
-            ${post.imageUrl ? `<div class="post-image"><img src="${post.imageUrl}" onclick="previewImage('${post.imageUrl}')" loading="lazy"></div>` : ''}
-            <div class="post-actions">
-              <button class="post-action-btn" onclick="likePost('${post.id}')">💜 ${post.likes || 0}</button>
-              <button class="post-action-btn" onclick="replyToPost('${post.id}')">💬 ${(post.comments||[]).length}</button>
-              <button class="post-action-btn" onclick="deletePost('${post.id}')">🗑️</button>
-            </div>
-            ${renderComments(post)}
-            <div id="reply-area-${post.id}" style="display:none;margin-top:0.5rem;">
-              <div style="display:flex;gap:0.4rem;">
-                <input id="reply-input-${post.id}" placeholder="回覆..." style="flex:1;padding:0.4rem 0.7rem;border:1px solid var(--lavender-light);border-radius:10px;font-family:inherit;font-size:0.82rem;outline:none;background:var(--lavender-soft);">
-                <button onclick="submitReply('${post.id}')" style="padding:0.4rem 0.7rem;background:var(--lavender);border:none;border-radius:10px;color:white;font-family:inherit;font-size:0.78rem;cursor:pointer;">回覆</button>
+              <div class="post-content">${post.content}</div>
+              ${post.imageUrl ? `<div class="post-image"><img src="${post.imageUrl}" onclick="previewImage('${post.imageUrl}')" loading="lazy"></div>` : ''}
+              <div class="post-actions">
+                <button class="post-action-btn" onclick="likePost('${post.id}')">💜 ${post.likes || 0}</button>
+                <button class="post-action-btn" onclick="replyToPost('${post.id}')">💬 ${(post.comments||[]).length}</button>
+                <button class="post-action-btn" onclick="deletePost('${post.id}')">🗑️</button>
+              </div>
+              ${renderComments(post)}
+              <div id="reply-area-${post.id}" style="display:none;margin-top:0.5rem;">
+                <div style="display:flex;gap:0.4rem;">
+                  <input id="reply-input-${post.id}" placeholder="回覆..." style="flex:1;padding:0.4rem 0.7rem;border:1px solid var(--lavender-light);border-radius:10px;font-family:inherit;font-size:0.82rem;outline:none;background:var(--lavender-soft);">
+                  <button onclick="submitReply('${post.id}')" style="padding:0.4rem 0.7rem;background:var(--lavender);border:none;border-radius:10px;color:white;font-family:inherit;font-size:0.78rem;cursor:pointer;">回覆</button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      `;
+        `;
     });
     html += '</div>';
   }
@@ -2200,28 +2206,23 @@ function renderComments(post) {
   return `<div class="post-comments">${post.comments.map(c => {
     const char = state.chars.find(ch => ch.id === c.charId);
     const av = char?.avatar;
-    const avHtml = isImgSrc(av)
-      ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;">`
-      : (av || '💬');
-    // 只有 user 留言（charId 為 null）才能編輯/刪除
+    const avHtml = isImgSrc(av) ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;">` : (av || '💬');
     const isUserComment = !c.charId;
-    const actionBtns = isUserComment ? `
-      <div class="comment-actions">
-        <button class="comment-action-btn" onclick="editComment('${post.id}','${c.id}')">✏️ 編輯</button>
-        <button class="comment-action-btn danger" onclick="deleteComment('${post.id}','${c.id}')">🗑️ 刪除</button>
-      </div>` : '';
+    const editBtn = isUserComment
+      ? `<button class="cmt-act-btn" onclick="editComment('${post.id}','${c.id}')">✏️ 編輯</button>`
+      : '';
+    const delBtn = `<button class="cmt-act-btn del" onclick="deleteComment('${post.id}','${c.id}')">🗑️ 刪除</button>`;
     return `
-      <div class="comment-item" data-comment-id="${c.id}">
+      <div class="comment-item" data-cid="${c.id}">
         <div class="comment-avatar">${avHtml}</div>
         <div class="comment-body">
           <div class="comment-bubble">
             <div class="comment-name">${c.authorName || char?.name || 'User'}</div>
-            <div class="comment-text" id="ctext-${c.id}">${c.content}</div>
+            <span id="ctxt-${c.id}">${c.content}</span>
           </div>
-          ${actionBtns}
+          <div class="comment-actions">${editBtn}${delBtn}</div>
         </div>
-      </div>
-    `;
+      </div>`;
   }).join('')}</div>`;
 }
 
@@ -2247,6 +2248,10 @@ async function userPostSocial() {
   await dbPut('socialPosts', post);
   document.getElementById('compose-input').value = '';
   renderSocialFeed();
+  // user 自己發文時，所有角色自動留言
+  if (!char && state.chars.length) {
+    setTimeout(() => allCharsReplyToPost(post.id), 1500);
+  }
 }
 
 function socialUpdatePersonaInfo() {
@@ -2354,7 +2359,6 @@ ${promptText ? `主題方向：${promptText}` : '根據你的個性與最近的�
 ${recentMsgs ? `[最近的對話記錄供參考，融入情緒與感受但不要直接引用]\n${recentMsgs}\n` : ''}
 
 字數至少400字，上限600字，語氣自然真實，有個人色彩與情感細節，像真人在分享生活，有起伏有細節不要虎頭蛇尾。
-
 只輸出貼文正文，不要加標題、作者名或任何說明。`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${state.apiKey}`;
@@ -2438,93 +2442,115 @@ async function submitReply(postId) {
   }
 }
 
+// ─── Comment CRUD ───────────────────────────────────
 function editComment(postId, commentId) {
-  const textEl = document.getElementById('ctext-' + commentId);
-  if (!textEl) return;
-  const currentText = textEl.textContent;
-  const bubble = textEl.closest('.comment-bubble');
-  const body = textEl.closest('.comment-body');
-
-  // 隱藏動作列，進入編輯模式
-  bubble.classList.add('editing');
-  textEl.style.display = 'none';
-  const nameEl = bubble.querySelector('.comment-name');
-
-  // 插入 textarea + 按鈕（放在 bubble 末尾）
-  const editHtml = `
-    <textarea class="comment-edit-area" id="cedit-${commentId}" rows="2">${currentText}</textarea>
-    <div class="comment-edit-row">
-      <button class="comment-edit-btn save" onclick="saveComment('${postId}','${commentId}')">✓ 儲存</button>
-      <button class="comment-edit-btn cancel" onclick="cancelEditComment('${postId}','${commentId}','${currentText.replace(/'/g,"\\'")}')">取消</button>
-    </div>
-  `;
-  bubble.insertAdjacentHTML('beforeend', editHtml);
-  const ta = document.getElementById('cedit-' + commentId);
+  const spanEl = document.getElementById('ctxt-' + commentId);
+  if (!spanEl) return;
+  const bubble = spanEl.closest('.comment-bubble');
+  const body   = spanEl.closest('.comment-body');
+  const orig   = spanEl.textContent;
+  spanEl.style.display = 'none';
+  bubble.insertAdjacentHTML('beforeend',
+    `<textarea class="cmt-edit-ta" id="ceta-${commentId}" rows="2">${orig}</textarea>` +
+    `<div class="cmt-edit-row">` +
+      `<button class="cmt-edit-save" onclick="saveComment('${postId}','${commentId}')">✓ 儲存</button>` +
+      `<button class="cmt-edit-cancel" onclick="cancelEditComment()">取消</button>` +
+    `</div>`
+  );
+  const ta = document.getElementById('ceta-' + commentId);
   if (ta) { ta.focus(); ta.style.height = ta.scrollHeight + 'px'; }
-
-  // 暫時隱藏動作列
-  const actions = body.querySelector('.comment-actions');
-  if (actions) actions.style.display = 'none';
+  body.querySelector('.comment-actions').style.display = 'none';
 }
-
 async function saveComment(postId, commentId) {
-  const ta = document.getElementById('cedit-' + commentId);
+  const ta = document.getElementById('ceta-' + commentId);
   if (!ta) return;
-  const newContent = ta.value.trim();
-  if (!newContent) return;
-
+  const txt = ta.value.trim();
+  if (!txt) return;
   const post = state.socialPosts.find(p => p.id === postId);
-  if (!post) return;
-  const comment = post.comments.find(c => c.id === commentId);
-  if (!comment) return;
-
-  comment.content = newContent;
+  const c    = post?.comments?.find(c => c.id === commentId);
+  if (!c) return;
+  c.content = txt;
   await dbPut('socialPosts', post);
   renderSocialFeed();
   showToast('✓ 留言已更新');
 }
-
-function cancelEditComment(postId, commentId, original) {
-  renderSocialFeed(); // 直接重新渲染還原
-}
-
+function cancelEditComment() { renderSocialFeed(); }
 async function deleteComment(postId, commentId) {
-  if (!confirm('確認刪除這則留言？')) return;
+  if (!confirm('確認刪除此留言？')) return;
   const post = state.socialPosts.find(p => p.id === postId);
   if (!post) return;
-  post.comments = post.comments.filter(c => c.id !== commentId);
+  post.comments = (post.comments || []).filter(c => c.id !== commentId);
   await dbPut('socialPosts', post);
   renderSocialFeed();
   showToast('🗑️ 留言已刪除');
 }
 
+// ─── AI 留言回覆 ─────────────────────────────────────
+// user 發貼文 → 所有角色都來留言
+async function allCharsReplyToPost(postId) {
+  const post = state.socialPosts.find(p => p.id === postId);
+  if (!post) return;
+  const chars = [...state.chars];
+  for (let i = 0; i < chars.length; i++) {
+    await new Promise(r => setTimeout(r, i * 1800));
+    const char = chars[i];
+    try {
+      const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+      const p2 = state.socialPosts.find(p => p.id === postId); // 重新取（可能已更新）
+      if (!p2) return;
+      const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
+有人在社群平台發文：「${p2.content.slice(0,300)}」
+${persona ? `你在和 ${persona.name} 說話。` : ''}請用繁體中文寫一則自然留言（1-2句），語氣符合個性。只輸出留言內容。`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+      const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
+      });
+      const data = await res.json();
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (reply) {
+        const p3 = state.socialPosts.find(p => p.id === postId);
+        if (!p3) return;
+        p3.comments.push({ id: uid(), charId: char.id, authorName: char.name, content: reply, time: Date.now() });
+        await dbPut('socialPosts', p3);
+        renderSocialFeed();
+      }
+    } catch(e) { /* silent */ }
+  }
+}
+
 async function aiReplyToComment(postId, userComment) {
   const post = state.socialPosts.find(p => p.id === postId);
   if (!post) return;
-  const char = state.chars.find(c => c.id === post.charId);
-  if (!char) return;
-
-  try {
-    const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
-    const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
-你剛在社群平台發了一篇貼文：「${post.content.slice(0,300)}」
-${persona ? `你正在和 ${persona.name} 說話。` : ''}有人回覆說：「${userComment}」
-請用繁體中文寫一個自然的回覆（1-2句話），語氣符合你的個性。只輸出回覆內容，不要加任何說明或標點以外的符號。`;
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 2000 } })
-    });
-    const data = await res.json();
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (reply) {
-      post.comments.push({ id: uid(), charId: char.id, authorName: char.name, content: reply, time: Date.now() });
-      await dbPut('socialPosts', post);
-      renderSocialFeed();
-    }
-  } catch(e) { /* silent */ }
+  // 若是 user 自己的貼文，讓所有角色回；否則只讓該貼文角色回
+  const charsToReply = post.charId
+    ? [state.chars.find(c => c.id === post.charId)].filter(Boolean)
+    : state.chars;
+  for (let i = 0; i < charsToReply.length; i++) {
+    await new Promise(r => setTimeout(r, i * 1800));
+    const char = charsToReply[i];
+    try {
+      const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+      const p2 = state.socialPosts.find(p => p.id === postId);
+      if (!p2) return;
+      const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
+貼文：「${p2.content.slice(0,300)}」
+${persona ? `你在和 ${persona.name} 說話。` : ''}有人留言：「${userComment}」
+請用繁體中文回應（1-2句），語氣符合個性。只輸出回覆內容。`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+      const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
+      });
+      const data = await res.json();
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (reply) {
+        const p3 = state.socialPosts.find(p => p.id === postId);
+        if (!p3) return;
+        p3.comments.push({ id: uid(), charId: char.id, authorName: char.name, content: reply, time: Date.now() });
+        await dbPut('socialPosts', p3);
+        renderSocialFeed();
+      }
+    } catch(e) { /* silent */ }
+  }
 }
 
 async function likePost(postId) {
@@ -2559,9 +2585,33 @@ function openSocialCompose() {
 
 // ─── DIARY ──────────────────────────────────────────
 function initDiary() {
+  renderDiaryCharTabs();
   renderDiaryCalendar();
   const label = document.getElementById('diary-month-label');
   label.textContent = state.diaryMonth.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long' });
+}
+
+function renderDiaryCharTabs() {
+  const el = document.getElementById('diary-char-tabs');
+  if (!el) return;
+  const items = [
+    { id: 'all', label: '📔 全部' },
+    ...state.chars.map(c => ({ id: c.id, label: c.name, avatar: c.avatar })),
+  ];
+  el.innerHTML = items.map(it => {
+    const act = it.id === state.diaryCharFilter ? ' active' : '';
+    let avHtml = '';
+    if (it.avatar !== undefined) {
+      avHtml = `<span class="cft-av">${isImgSrc(it.avatar)?`<img src="${it.avatar}">`:( it.avatar||'🌸')}</span>`;
+    }
+    return `<button class="cft-btn${act}" onclick="switchDiaryCharTab('${it.id}')">${avHtml}${it.label}</button>`;
+  }).join('');
+}
+
+function switchDiaryCharTab(id) {
+  state.diaryCharFilter = id;
+  renderDiaryCharTabs();
+  if (state.selectedDiaryDate) loadDiaryForDate(state.selectedDiaryDate);
 }
 
 function changeMonth(dir) {
@@ -2607,9 +2657,12 @@ async function selectDiaryDate(dateStr) {
 async function loadDiaryForDate(dateStr) {
   const content = document.getElementById('diary-content');
 
-  // Check if we have entries for this date
+  // Check if we have entries for this date（套用角色篩選）
   const entries = [];
-  state.chars.forEach(char => {
+  const charsToShow = state.diaryCharFilter === 'all'
+    ? state.chars
+    : state.chars.filter(c => c.id === state.diaryCharFilter);
+  charsToShow.forEach(char => {
     const charEntries = state.diaryEntries[char.id] || {};
     if (charEntries[dateStr]) {
       entries.push({ char, content: charEntries[dateStr] });
@@ -3684,6 +3737,7 @@ async function refreshAchievements() {
 // ─── THEATER 小劇場 ──────────────────────────────────
 let theaterLastChar = null;
 let theaterLastPromptText = '';
+let theaterCharFilter = null; // null = 跟隨 select；charId = 歷史篩選
 
 function renderTheaterCharSelect() {
   const sel = document.getElementById('theater-char-select');
@@ -3692,6 +3746,77 @@ function renderTheaterCharSelect() {
     ? state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('')
     : '<option value="">（尚無角色）</option>';
   if (state.activeCharId) sel.value = state.activeCharId;
+  renderTheaterCharTabs();
+  renderTheaterHistory(sel.value);
+}
+
+function renderTheaterCharTabs() {
+  const el = document.getElementById('theater-char-tabs');
+  if (!el) return;
+  if (!state.chars.length) { el.innerHTML = ''; return; }
+  const curId = document.getElementById('theater-char-select')?.value || state.chars[0]?.id;
+  el.innerHTML = state.chars.map(c => {
+    const act = c.id === curId ? ' active' : '';
+    const av = c.avatar;
+    const avHtml = `<span class="cft-av">${isImgSrc(av)?`<img src="${av}">`:( av||'🌸')}</span>`;
+    return `<button class="cft-btn${act}" onclick="switchTheaterCharTab('${c.id}')">${avHtml}${c.name}</button>`;
+  }).join('');
+}
+
+function switchTheaterCharTab(charId) {
+  const sel = document.getElementById('theater-char-select');
+  if (sel) sel.value = charId;
+  renderTheaterCharTabs();
+  renderTheaterHistory(charId);
+}
+
+function syncTheaterTabFromSelect(charId) {
+  renderTheaterCharTabs();
+  renderTheaterHistory(charId);
+}
+
+function renderTheaterHistory(charId) {
+  const el = document.getElementById('theater-history-list');
+  if (!el) return;
+  const entries = (state.theaterEntries[charId] || []);
+  if (!entries.length) {
+    el.innerHTML = '<div style="font-size:0.8rem;color:var(--text-light);text-align:center;padding:0.8rem 0;">此角色尚無已儲存的小劇場</div>';
+    return;
+  }
+  const styleLabel = { none:'自由', romantic:'💕浪漫', dark:'🌑陰暗', spicy:'🔥色色', funny:'😂搞笑', angsty:'💔虐心' };
+  el.innerHTML = entries.map(e => `
+    <div class="th-item" onclick="loadTheaterEntry('${charId}','${e.id}')">
+      <div class="th-item-body">
+        <div class="th-meta">
+          <span class="th-style">${styleLabel[e.style]||e.style}</span>
+          <span class="th-date">${new Date(e.time).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'})}</span>
+        </div>
+        <div class="th-prompt">${e.prompt.slice(0,60)}${e.prompt.length>60?'…':''}</div>
+      </div>
+      <button class="th-del" onclick="event.stopPropagation();deleteTheaterEntry('${charId}','${e.id}')">×</button>
+    </div>`
+  ).join('');
+}
+
+function loadTheaterEntry(charId, entryId) {
+  const entry = (state.theaterEntries[charId]||[]).find(e => e.id === entryId);
+  if (!entry) return;
+  const char = state.chars.find(c => c.id === charId);
+  const resultEl = document.getElementById('theater-result');
+  const textEl   = document.getElementById('theater-result-text');
+  const titleEl  = document.getElementById('theater-result-title');
+  resultEl.style.display = 'block';
+  titleEl.textContent = `✨ ${char?.name||''} × ${new Date(entry.time).toLocaleDateString('zh-TW')}`;
+  textEl.textContent = entry.text;
+  resultEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function deleteTheaterEntry(charId, entryId) {
+  if (!confirm('確認刪除此篇小劇場？')) return;
+  state.theaterEntries[charId] = (state.theaterEntries[charId]||[]).filter(e => e.id !== entryId);
+  await dbPut('theaterEntries', { id: charId, entries: state.theaterEntries[charId] });
+  renderTheaterHistory(charId);
+  showToast('🗑️ 已刪除');
 }
 
 function setTheaterStyle(style, btn) {
@@ -3826,6 +3951,14 @@ ${styleMap[style] || '自由發揮，符合角色個性即可。'}
     }
     textEl.textContent = fullText.trim();
     showToast('✓ 小劇場已生成');
+    // 自動儲存到角色歷史
+    if (fullText.trim()) {
+      const entry = { id: uid(), prompt: promptText, style, text: fullText.trim(), time: Date.now() };
+      if (!state.theaterEntries[charId]) state.theaterEntries[charId] = [];
+      state.theaterEntries[charId].unshift(entry);
+      await dbPut('theaterEntries', { id: charId, entries: state.theaterEntries[charId] });
+      renderTheaterHistory(charId);
+    }
   } catch(err) {
     textEl.textContent = '生成失敗：' + err.message;
     showToast('❌ 生成失敗：' + err.message);

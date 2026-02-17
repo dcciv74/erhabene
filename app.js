@@ -30,11 +30,6 @@ Stay in character at all times. Be warm, personal, and emotionally real.`,
   currentPage: 'chat',
   diaryMonth: new Date(),
   selectedDiaryDate: null,
-  cctvCharId: null,
-  spellMode: false,
-  spellContext: [],
-  realWorldEvents: true,
-  userBirthday: '',
   ctxTargetMsgId: null,
   autoMsgEnabled: true,    // 角色自動傳訊息開關
   autoMsgHours: 3,         // 幾小時無回覆後自動發
@@ -160,7 +155,6 @@ function enterApp() {
   if (customInputSettings) customInputSettings.value = model;
   renderSidebar();
   renderCharsGrid();
-  updateSpellCharSelect();
   initDiary();
   renderSocialFeed();
   checkRealWorldEvents();
@@ -200,13 +194,6 @@ function switchPage(page) {
 
   // 切換任何頁面都先收合底部 spell-panel（相容舊版）
   document.getElementById('spell-panel')?.classList.remove('open');
-
-  // 咒語舞台：完全佔滿畫面，隱藏 sidebar
-  if (page === 'cctv') {
-    sidebar.style.display = 'none';
-    renderSpellStage();
-    return;
-  }
 
   // 其他頁面恢復 sidebar
   sidebar.style.display = '';
@@ -1824,14 +1811,18 @@ async function loadDiaryForDate(dateStr) {
     content.innerHTML = entries.map(e => {
       const av = e.char.avatar;
       const avHtml = av?.startsWith('http') ? `<img src="${av}">` : (av || '🌸');
+      const safeText = e.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       return `
         <div class="diary-entry" style="margin-bottom:1rem;">
-          <div class="diary-entry-date">${new Date(dateStr).toLocaleDateString('zh-TW', {year:'numeric',month:'long',day:'numeric'})}</div>
+          <div class="diary-entry-header">
+            <div class="diary-entry-date">${new Date(dateStr).toLocaleDateString('zh-TW', {year:'numeric',month:'long',day:'numeric'})}</div>
+            <button class="diary-regen-btn" onclick="regenDiary('${dateStr}','${e.char.id}')" title="重新生成">🔄 重新生成</button>
+          </div>
           <div class="diary-entry-char">
             <div class="diary-char-avatar">${avHtml}</div>
             <div class="diary-char-name">${e.char.name} 的日記</div>
           </div>
-          <div class="diary-entry-text">${e.content}</div>
+          <div class="diary-entry-text">${safeText}</div>
         </div>
       `;
     }).join('');
@@ -1863,59 +1854,110 @@ async function loadDiaryForDate(dateStr) {
   `;
 }
 
+async function regenDiary(dateStr, charId) {
+  // 強制清空舊日記再重新生成
+  if (state.diaryEntries[charId]) {
+    delete state.diaryEntries[charId][dateStr];
+  }
+  await loadDiaryForDate(dateStr);
+  await generateDiary(dateStr);
+}
+
 async function generateDiary(dateStr, styleOverride) {
   if (state.chars.length === 0) return;
-  // 取得文風（優先用傳入的，否則從 state 或預設）
   const diaryStyle = styleOverride || state.diaryStyle || 'default';
   showToast('📔 生成日記中...');
 
   const stylePromptMap = {
-    default:  '文風自然真摯，像真人在寫的私密日記，有細節，有感受。',
-    dark:     '文風陰暗、壓抑、帶著憂鬱與疏離感，如文學作品般沉重，充滿內心掙扎與黑暗的獨白。',
-    spicy:    '文風色色、曖昧撩人，有大膽的感官描寫與性暗示，熱辣露骨但保有文學性。',
-    sunny:    '文風陽光開朗、積極樂觀，充滿正能量與對生活的熱愛，溫暖療癒。',
-    cute:     '文風輕鬆可愛，充滿少女感，語氣俏皮活潑，常用可愛的詞彙與感嘆，像在和朋友說話一樣自在。',
+    default: '文風自然真摯，像真人在寫的私密日記，充滿細節與情感。',
+    dark:    '文風陰暗、壓抑、帶著憂鬱與疏離感，如文學作品般沉重，充滿內心掙扎與黑暗獨白。',
+    spicy:   '文風色色、曖昧撩人，有大膽的感官描寫與性暗示，熱辣露骨但保有文學性。',
+    sunny:   '文風陽光開朗、積極樂觀，充滿正能量與對生活的熱愛，溫暖療癒。',
+    cute:    '文風輕鬆可愛，充滿少女感，語氣俏皮活潑，常用可愛的詞彙與感嘆。',
   };
   const stylePrompt = stylePromptMap[diaryStyle] || stylePromptMap.default;
 
   for (const char of state.chars) {
+    // 跳過已有日記的角色（除非是 regenDiary 呼叫的）
+    if (state.diaryEntries[char.id]?.[dateStr]) continue;
+
     try {
-      // Get chat history context from around that date
       const chatContext = state.chats
         .filter(c => c.charId === char.id)
         .flatMap(c => c.messages)
-        .filter(m => {
-          return Math.abs(new Date(m.time) - new Date(dateStr)) < 86400000 * 3;
-        })
+        .filter(m => Math.abs(new Date(m.time) - new Date(dateStr)) < 86400000 * 3)
         .slice(-10)
         .map(m => `${m.role}: ${m.content}`).join('\n');
 
       const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,5).join(', ');
 
       const prompt = `你是 ${char.name}。${char.desc?.slice(0,200)||''}
-今天是 ${dateStr}。請以第一人稱寫一篇完整的日記（繁體中文，400-600字，不可截斷，必須有開頭、中段與結尾）。
-${chatContext ? `今天和你重要的人發生了這些事：\n${chatContext}` : '描述你想像中的一天'}
-${memories ? `重要的記憶：${memories}` : ''}
+今天是 ${dateStr}。請以第一人稱寫一篇私密日記，繁體中文，篇幅約500字。
+${chatContext ? `今天和你重要的人發生了這些事：\n${chatContext}` : '描述你今天想像中的一天。'}
+${memories ? `你們之間的重要記憶：${memories}` : ''}
 
 文風要求：${stylePrompt}
-重要：請直接輸出日記全文，不要加任何標題、前言或額外說明。日記必須完整，不能中途截斷。`;
+直接輸出日記正文，不加標題、日期標頭或任何說明文字。`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+      // 使用 streamGenerateContent 確保取得完整回覆
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:streamGenerateContent?alt=sse&key=${state.apiKey}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 2048 } })
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 1.0, maxOutputTokens: 4096 }
+        })
       });
-      const data = await res.json();
-      const diaryText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || 'API Error');
+      }
+
+      // 讀取 SSE 串流，累積所有 chunk
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // 保留不完整的行
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6).trim();
+            if (jsonStr === '[DONE]') break;
+            try {
+              const chunk = JSON.parse(jsonStr);
+              const part = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (part) fullText += part;
+            } catch(e) { /* ignore parse errors */ }
+          }
+        }
+      }
+      // 處理剩餘 buffer
+      if (buffer.startsWith('data: ')) {
+        try {
+          const chunk = JSON.parse(buffer.slice(6).trim());
+          const part = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (part) fullText += part;
+        } catch(e) {}
+      }
+
+      const diaryText = fullText.trim();
       if (diaryText) {
         if (!state.diaryEntries[char.id]) state.diaryEntries[char.id] = {};
-        // 儲存文字（不套 regex，保留完整原文）
         state.diaryEntries[char.id][dateStr] = diaryText;
         await dbPut('diaryEntries', { id: char.id, entries: state.diaryEntries[char.id] });
       }
-    } catch(e) { /* silent per char */ }
+    } catch(e) {
+      console.warn('Diary gen error:', e);
+      showToast('⚠️ 日記生成失敗：' + e.message);
+    }
   }
 
   renderDiaryCalendar();
@@ -1928,191 +1970,6 @@ function setDiaryStyle(style, btn) {
   document.querySelectorAll('.diary-style-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
 }
-
-// ─── SPELL STAGE（獨立咒語舞台，原 CCTV 頁） ─────────────────
-let spellStageHistory = []; // [{role:'user'|'model', parts:[{text}]}]
-let spellStageCharId = null;
-let spellStageSystem = '';
-
-function renderSpellStage() {
-  const page = document.getElementById('cctv-page');
-  if (!page) return;
-  // 只重新渲染角色選擇行
-  const charRow = document.getElementById('cctv-char-row');
-  charRow.innerHTML = state.chars.length
-    ? state.chars.map(c => {
-        const av = c.avatar?.startsWith('data:') || c.avatar?.startsWith('http')
-          ? `<img src="${c.avatar}" style="width:22px;height:22px;border-radius:6px;object-fit:cover;">`
-          : `<span>${c.avatar||'🌸'}</span>`;
-        return `<div class="cctv-char-chip ${spellStageCharId===c.id?'active':''}" onclick="selectSpellStageChar('${c.id}')">${av} ${c.name}</div>`;
-      }).join('')
-    : '<div style="color:rgba(201,184,232,0.4);font-size:0.82rem;padding:0.5rem;">請先建立角色</div>';
-}
-
-function selectSpellStageChar(charId) {
-  spellStageCharId = charId;
-  spellStageHistory = [];
-  renderSpellStage();
-  // 清空對話區
-  const msgArea = document.getElementById('spell-stage-messages');
-  if (msgArea) {
-    msgArea.innerHTML = `<div style="text-align:center;padding:3rem 1rem;color:var(--text-light);font-size:0.85rem;">
-      已選擇角色，在下方輸入咒語場景後按「開始」<br>
-      <span style="font-size:0.75rem;opacity:0.7">此頁面不套用 regex，可閱讀完整長篇回覆</span>
-    </div>`;
-  }
-  const char = state.chars.find(c => c.id === charId);
-  if (char) showToast(`✨ 已選擇 ${char.name}`);
-}
-
-async function startSpellStage() {
-  const scenarioInput = document.getElementById('spell-stage-scenario');
-  const scenario = scenarioInput?.value?.trim();
-  if (!spellStageCharId) { showToast('請先選擇角色'); return; }
-  if (!scenario) { showToast('請輸入場景描述'); return; }
-
-  const char = state.chars.find(c => c.id === spellStageCharId);
-  if (!char) return;
-
-  // 建立系統提示
-  const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,5).join('\n');
-  const recentChat = state.activeChat
-    ? (state.chats.find(c=>c.id===state.activeChat)?.messages||[]).slice(-8).map(m=>`${m.role==='user'?'user':char.name}: ${m.content}`).join('\n')
-    : '';
-
-  spellStageSystem = `你是 ${char.name}，正在與 user 進行一場沉浸式小劇場。
-角色設定：${char.desc||''}
-
-${memories ? `[長期記憶]\n${memories}` : ''}
-${recentChat ? `[近期聊天背景]\n${recentChat}` : ''}
-
-[場景設定]
-${scenario}
-
-重要規則：
-- 這是獨立的小劇場空間，完全不影響主聊天記錄
-- 可以寫得更長、更有文學性、更多動作描述和內心獨白
-- 以繁體中文回應，不限字數，盡情投入角色
-- 不要用 * 包裹動作，改用（括號）表示動作和表情`;
-
-  spellStageHistory = [];
-  scenarioInput.value = '';
-
-  const msgArea = document.getElementById('spell-stage-messages');
-  if (msgArea) msgArea.innerHTML = `<div style="text-align:center;padding:1.5rem;color:var(--text-light);font-size:0.8rem;font-style:italic;">✨ 小劇場開始 — ${char.name}</div>`;
-
-  await sendSpellStageMessage('（場景開始）');
-}
-
-async function sendSpellStageMsg() {
-  const input = document.getElementById('spell-stage-input');
-  const text = input?.value?.trim();
-  if (!text) return;
-  if (!spellStageCharId) { showToast('請先選擇角色並開始場景'); return; }
-  input.value = '';
-  await sendSpellStageMessage(text);
-}
-
-async function sendSpellStageMessage(userText) {
-  if (!spellStageCharId) return;
-  const char = state.chars.find(c => c.id === spellStageCharId);
-  if (!char) return;
-
-  const msgArea = document.getElementById('spell-stage-messages');
-  if (!msgArea) return;
-
-  // 顯示 user 訊息（非開始指令）
-  if (userText !== '（場景開始）') {
-    const userDiv = document.createElement('div');
-    userDiv.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:0.8rem;';
-    userDiv.innerHTML = `<div style="max-width:75%;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));color:white;border-radius:18px 18px 4px 18px;padding:0.75rem 1rem;font-size:0.88rem;line-height:1.6;white-space:pre-wrap;">${userText.replace(/</g,'&lt;')}</div>`;
-    msgArea.appendChild(userDiv);
-  }
-
-  // 顯示 typing 指示
-  const av = char.avatar?.startsWith('data:')||char.avatar?.startsWith('http')
-    ? `<img src="${char.avatar}" style="width:32px;height:32px;border-radius:10px;object-fit:cover;flex-shrink:0;">`
-    : `<span style="font-size:1.4rem;flex-shrink:0;">${char.avatar||'🌸'}</span>`;
-
-  const typingDiv = document.createElement('div');
-  typingDiv.id = 'spell-stage-typing';
-  typingDiv.style.cssText = 'display:flex;align-items:center;gap:0.6rem;margin-bottom:0.8rem;';
-  typingDiv.innerHTML = `${av}<div style="background:rgba(255,255,255,0.9);border-radius:4px 18px 18px 18px;padding:0.6rem 0.9rem;box-shadow:0 2px 8px rgba(180,160,210,0.18);"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
-  msgArea.appendChild(typingDiv);
-  msgArea.scrollTop = msgArea.scrollHeight;
-
-  // 加入歷史
-  spellStageHistory.push({ role: 'user', parts: [{ text: userText }] });
-
-  try {
-    // Gemini API 格式：system_instruction 獨立，contents 是對話歷史
-    const body = {
-      system_instruction: { parts: [{ text: spellStageSystem }] },
-      contents: spellStageHistory.map(m => ({ role: m.role, parts: m.parts })),
-      generationConfig: {
-        temperature: state.temperature || 1.0,
-        maxOutputTokens: 2048
-      }
-    };
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      const errMsg = data?.error?.message || `HTTP ${res.status}`;
-      throw new Error(errMsg);
-    }
-
-    const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!replyText) {
-      const reason = data.candidates?.[0]?.finishReason || '未知原因';
-      throw new Error(`未收到回覆 (${reason})`);
-    }
-
-    spellStageHistory.push({ role: 'model', parts: [{ text: replyText }] });
-
-    // 移除 typing
-    document.getElementById('spell-stage-typing')?.remove();
-
-    // 顯示回覆（完整長篇，不套 regex）
-    const aiDiv = document.createElement('div');
-    aiDiv.style.cssText = 'display:flex;align-items:flex-start;gap:0.6rem;margin-bottom:1.4rem;';
-    aiDiv.innerHTML = `${av}<div style="flex:1;background:rgba(255,255,255,0.92);border-radius:4px 18px 18px 18px;padding:1rem 1.2rem;font-size:0.9rem;line-height:1.9;color:var(--text-dark);white-space:pre-wrap;box-shadow:0 2px 12px rgba(180,160,210,0.18);word-break:break-word;">${replyText.replace(/</g,'&lt;')}</div>`;
-    msgArea.appendChild(aiDiv);
-    msgArea.scrollTop = msgArea.scrollHeight;
-
-  } catch(e) {
-    document.getElementById('spell-stage-typing')?.remove();
-    // 從歷史移除失敗的 user 訊息，以便重試
-    spellStageHistory.pop();
-    const errDiv = document.createElement('div');
-    errDiv.style.cssText = 'text-align:center;color:#e87878;font-size:0.82rem;padding:0.6rem 1rem;background:rgba(232,120,120,0.08);border-radius:10px;margin-bottom:0.8rem;';
-    errDiv.textContent = `⚠️ 錯誤：${e.message}`;
-    msgArea.appendChild(errDiv);
-    msgArea.scrollTop = msgArea.scrollHeight;
-  }
-}
-
-function clearSpellStage() {
-  spellStageHistory = [];
-  const msgArea = document.getElementById('spell-stage-messages');
-  if (msgArea) msgArea.innerHTML = `<div style="text-align:center;padding:3rem 1rem;color:var(--text-light);font-size:0.85rem;">咒語舞台已清空</div>`;
-  showToast('✓ 已清空對話');
-}
-
-function handleSpellStageKey(e) {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    sendSpellStageMsg();
-  }
-}
-
 
 // ─── AUTO MESSAGE ────────────────────────────────────
 function startAutoMsgTimer() {

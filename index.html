@@ -748,7 +748,25 @@ body {
 .diary-entry-date {
   font-family: 'Cormorant Garamond', serif;
   font-size: 1.1rem; font-style: italic;
-  color: var(--text-mid); margin-bottom: 0.8rem;
+  color: var(--text-mid);
+}
+.diary-entry-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+.diary-regen-btn {
+  padding: 0.3rem 0.75rem;
+  background: var(--lavender-soft);
+  border: 1.5px solid var(--lavender-light);
+  border-radius: 20px;
+  font-family: inherit; font-size: 0.72rem;
+  color: var(--text-mid); cursor: pointer;
+  transition: all 0.15s; white-space: nowrap;
+}
+.diary-regen-btn:hover {
+  background: var(--lavender-light);
+  color: var(--text-dark);
+  border-color: var(--lavender);
 }
 .diary-entry-char {
   display: flex; align-items: center; gap: 0.6rem;
@@ -791,79 +809,6 @@ body {
   border-color: var(--lavender);
   color: white;
   font-weight: 500;
-}
-
-/* ─── SPELL STAGE PAGE（咒語舞台，原 CCTV） ─── */
-#cctv-page {
-  background: var(--beige-soft);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-#spell-stage-messages::-webkit-scrollbar { width: 4px; }
-#spell-stage-messages::-webkit-scrollbar-thumb { background: var(--lavender-light); border-radius: 2px; }
-
-/* cctv legacy styles removed */
-
-.cctv-char-select-row {
-  padding: 0.6rem 1rem;
-  display: flex; gap: 0.5rem; overflow-x: auto;
-  border-bottom: 1px solid rgba(201,184,232,0.08);
-  flex-shrink: 0;
-}
-.cctv-char-chip {
-  display: flex; align-items: center; gap: 0.4rem;
-  padding: 0.35rem 0.8rem;
-  border-radius: 20px;
-  background: rgba(201,184,232,0.1);
-  border: 1px solid rgba(201,184,232,0.2);
-  cursor: pointer; white-space: nowrap;
-  font-size: 0.78rem; color: rgba(201,184,232,0.6);
-  transition: all 0.15s;
-}
-.cctv-char-chip.active {
-  background: rgba(201,184,232,0.2);
-  border-color: var(--lavender);
-  color: var(--lavender);
-}
-.cctv-chip-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(168,216,168,0.8); }
-
-.cctv-content { flex: 1; overflow-y: auto; padding: 1rem; }
-
-.cctv-screen {
-  background: rgba(255,255,255,0.04);
-  border-radius: 18px;
-  border: 1px solid rgba(201,184,232,0.1);
-  overflow: hidden;
-  margin-bottom: 1rem;
-}
-.cctv-screen-header {
-  padding: 0.6rem 1rem;
-  background: rgba(201,184,232,0.08);
-  display: flex; align-items: center; justify-content: space-between;
-}
-.cctv-cam-label {
-  font-size: 0.72rem; color: rgba(201,184,232,0.5);
-  letter-spacing: 0.08em;
-}
-.cctv-timestamp {
-  font-size: 0.68rem; color: rgba(232,160,184,0.5);
-  font-family: monospace;
-}
-.cctv-screen-body { padding: 1rem; }
-.cctv-activity-list { display: flex; flex-direction: column; gap: 0.6rem; }
-.cctv-activity-item {
-  display: flex; align-items: flex-start; gap: 0.6rem;
-}
-.cctv-act-time {
-  font-size: 0.72rem; color: rgba(201,184,232,0.4);
-  font-family: monospace; white-space: nowrap;
-  padding-top: 0.1rem;
-}
-.cctv-act-text {
-  font-size: 0.82rem; color: rgba(201,184,232,0.75);
-  line-height: 1.5;
 }
 
 /* ─── LOREBOOK (SillyTavern Style) ─── */
@@ -1348,7 +1293,6 @@ body {
     <button class="nav-btn" onclick="switchPage('chars')" title="角色" id="nav-chars">🌸</button>
     <button class="nav-btn" onclick="switchPage('social')" title="社群" id="nav-social">✦</button>
     <button class="nav-btn" onclick="switchPage('diary')" title="日記" id="nav-diary">📔</button>
-    <button class="nav-btn" onclick="switchPage('cctv')" title="咒語舞台" id="nav-cctv">✨</button>
     <div class="nav-spacer"></div>
     <button class="nav-btn" onclick="openModal('memory-modal')" title="長期記憶">🧠</button>
     <button class="nav-btn" onclick="openModal('lorebook-modal')" title="Lorebook">📚</button>
@@ -1442,38 +1386,6 @@ body {
       <div class="diary-calendar" id="diary-calendar"></div>
       <div class="diary-content" id="diary-content">
         <div class="diary-empty">點擊日期查看角色日記</div>
-      </div>
-    </div>
-
-    <!-- SPELL STAGE PAGE（原 CCTV） -->
-    <div class="page" id="cctv-page">
-      <div style="padding:0.8rem 1.2rem;background:var(--header-bg);border-bottom:1px solid rgba(201,184,232,0.2);display:flex;align-items:center;gap:0.8rem;flex-shrink:0;">
-        <button onclick="switchPage('chat')" style="background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:10px;padding:0.3rem 0.7rem;font-family:inherit;font-size:0.8rem;color:var(--text-mid);cursor:pointer;">‹ 聊天</button>
-        <div style="font-size:1rem;font-weight:700;color:var(--text-dark);">✨ 咒語舞台</div>
-        <div style="font-size:0.72rem;color:var(--text-light);flex:1">獨立空間 · 不套 regex · 支援長篇回覆</div>
-        <button onclick="clearSpellStage()" style="background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:10px;padding:0.3rem 0.7rem;font-family:inherit;font-size:0.75rem;color:var(--text-mid);cursor:pointer;">清空</button>
-      </div>
-      <!-- 角色選擇 -->
-      <div class="cctv-char-select-row" id="cctv-char-row" style="padding:0.5rem 0.8rem;"></div>
-      <!-- 場景設定 -->
-      <div style="padding:0.6rem 1rem;border-bottom:1px solid rgba(201,184,232,0.15);flex-shrink:0;">
-        <textarea id="spell-stage-scenario" placeholder="輸入場景設定（咒語）... 例：我們在一個下午的咖啡廳，你剛失去工作，我來安慰你..." 
-          style="width:100%;min-height:70px;max-height:120px;resize:vertical;border:1.5px solid var(--lavender-light);border-radius:12px;padding:0.6rem 0.9rem;font-family:inherit;font-size:0.83rem;color:var(--text-dark);background:var(--lavender-soft);outline:none;line-height:1.5;"></textarea>
-        <button onclick="startSpellStage()" style="margin-top:0.4rem;width:100%;padding:0.6rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:12px;color:white;font-family:inherit;font-size:0.88rem;cursor:pointer;font-weight:500;">✨ 開始小劇場</button>
-      </div>
-      <!-- 對話區 -->
-      <div id="spell-stage-messages" style="flex:1;overflow-y:auto;padding:1rem;">
-        <div style="text-align:center;padding:3rem 1rem;color:var(--text-light);font-size:0.85rem;">選擇角色，輸入場景後按「開始小劇場」<br><span style="font-size:0.75rem;opacity:0.7">此頁面不套用 regex，可閱讀完整長篇回覆</span></div>
-      </div>
-      <!-- 對話輸入 -->
-      <div style="padding:0.6rem 1rem 0.8rem;border-top:1px solid rgba(201,184,232,0.2);background:var(--header-bg);flex-shrink:0;">
-        <div style="display:flex;gap:0.5rem;align-items:flex-end;">
-          <textarea id="spell-stage-input" placeholder="繼續對話... (Ctrl+Enter 送出)" rows="2"
-            onkeydown="handleSpellStageKey(event)"
-            oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'"
-            style="flex:1;border:1.5px solid var(--lavender-light);border-radius:14px;padding:0.65rem 0.9rem;font-family:inherit;font-size:0.88rem;color:var(--text-dark);background:var(--lavender-soft);outline:none;resize:none;line-height:1.5;"></textarea>
-          <button onclick="sendSpellStageMsg()" style="width:42px;height:42px;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:14px;color:white;font-size:1.1rem;cursor:pointer;flex-shrink:0;">➤</button>
-        </div>
       </div>
     </div>
 
@@ -1615,9 +1527,6 @@ body {
   </button>
   <button class="bottom-nav-btn" onclick="switchPage('diary')" id="bnav-diary">
     <span class="icon">📔</span><span>日記</span>
-  </button>
-  <button class="bottom-nav-btn" onclick="switchPage('cctv')" id="bnav-cctv">
-    <span class="icon">✨</span><span>咒語</span>
   </button>
   <button class="bottom-nav-btn" onclick="switchPage('settings')" id="bnav-settings">
     <span class="icon">⚙️</span><span>設定</span>

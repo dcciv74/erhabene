@@ -1436,19 +1436,34 @@ body {
   opacity: 0; pointer-events: none;
   transition: opacity 0.15s;
   z-index: 10;
-  background: rgba(255,255,255,0.95);
+  background: rgba(255,255,255,0.97);
   border: 1px solid rgba(201,184,232,0.3);
   border-radius: 12px; padding: 0.25rem 0.3rem;
-  box-shadow: 0 2px 10px rgba(180,160,210,0.15);
+  box-shadow: 0 2px 10px rgba(180,160,210,0.2);
   backdrop-filter: blur(8px);
+  white-space: nowrap;
 }
 .msg-actions-left  { right: calc(100% + 6px); }
 .msg-actions-right { left: calc(100% + 6px); }
 @media (hover: hover) {
   .msg-row:hover .msg-actions { opacity: 1; pointer-events: auto; }
 }
-/* Mobile: shown via JS after long press */
-.msg-actions.mobile-show { opacity: 1; pointer-events: auto; }
+/* Mobile long-press: 固定在氣泡正下方，不會超出螢幕 */
+.msg-actions.mobile-show {
+  opacity: 1; pointer-events: auto;
+  position: fixed;
+  top: auto !important; bottom: 80px;
+  left: 50% !important; right: auto !important;
+  transform: translateX(-50%) !important;
+  z-index: 999;
+  box-shadow: 0 4px 24px rgba(150,120,200,0.25);
+  border-radius: 16px;
+  padding: 0.4rem 0.5rem;
+  gap: 0.4rem;
+}
+.msg-actions.mobile-show .msg-action-btn {
+  font-size: 1rem; padding: 0.35rem 0.5rem;
+}
 .msg-action-btn {
   background: none; border: none; cursor: pointer;
   font-size: 0.82rem; padding: 0.2rem 0.3rem;

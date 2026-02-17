@@ -502,7 +502,15 @@ function openChat(chatId) {
   avatarDiv.innerHTML = isImgAv
     ? `<img src="${char.avatar}" alt="">` : (char.avatar || '🌸');
   document.getElementById('header-name').textContent = char.name;
-  document.getElementById('header-status').textContent = '在線';
+
+  // 自動連動 Persona：在副標題顯示目前角色綁定的 persona
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const statusEl = document.getElementById('header-status');
+  if (persona) {
+    statusEl.innerHTML = `在線 &nbsp;·&nbsp; <span style="color:var(--lavender);font-weight:500;">🎭 ${persona.name}</span>`;
+  } else {
+    statusEl.textContent = '在線';
+  }
 
   // Render messages
   renderMessages(chatId);
@@ -612,21 +620,55 @@ function renderMessages(chatId) {
 
       // Desktop: right-click context menu
       row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
-      // Mobile: long press → show inline actions panel
+
+      // Mobile: long press (300ms) → show inline action buttons
+      // 記錄 touch 起始位置，移動超過 8px 就取消（防止滾動誤觸）
+      let _lpTimer = null;
+      let _lpStartX = 0, _lpStartY = 0;
+      let _lpFired = false;
+
       row.addEventListener('touchstart', e => {
-        longPressTimer = setTimeout(() => {
-          // Hide all other mobile action panels
-          document.querySelectorAll('.msg-actions.mobile-show').forEach(el => el.classList.remove('mobile-show'));
+        _lpFired = false;
+        _lpStartX = e.touches[0].clientX;
+        _lpStartY = e.touches[0].clientY;
+        _lpTimer = setTimeout(() => {
+          _lpFired = true;
+          // 震動回饋（Android）
+          if (navigator.vibrate) navigator.vibrate(40);
+          // 隱藏其他已開啟的 action panel
+          document.querySelectorAll('.msg-actions.mobile-show')
+            .forEach(el => el.classList.remove('mobile-show'));
           const actions = row.querySelector('.msg-actions');
-          if (actions) actions.classList.add('mobile-show');
-          // Tap anywhere else to dismiss
-          setTimeout(() => document.addEventListener('touchstart', () => {
-            document.querySelectorAll('.msg-actions.mobile-show').forEach(el => el.classList.remove('mobile-show'));
-          }, { once: true }), 100);
-        }, 500);
+          if (actions) {
+            actions.classList.add('mobile-show');
+            // 點其他地方收起
+            const dismiss = ev => {
+              if (!actions.contains(ev.target)) {
+                actions.classList.remove('mobile-show');
+                document.removeEventListener('touchstart', dismiss, true);
+              }
+            };
+            setTimeout(() => document.addEventListener('touchstart', dismiss, true), 80);
+          }
+        }, 300);
       }, { passive: true });
-      row.addEventListener('touchend', clearLongPress);
-      row.addEventListener('touchmove', clearLongPress, { passive: true });
+
+      row.addEventListener('touchmove', e => {
+        if (_lpTimer) {
+          const dx = e.touches[0].clientX - _lpStartX;
+          const dy = e.touches[0].clientY - _lpStartY;
+          // 移動超過 8px 視為滾動，取消長按
+          if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+            clearTimeout(_lpTimer);
+            _lpTimer = null;
+          }
+        }
+      }, { passive: true });
+
+      row.addEventListener('touchend', () => {
+        clearTimeout(_lpTimer);
+        _lpTimer = null;
+      });
 
       groupEl.appendChild(row);
     });
@@ -646,7 +688,8 @@ function addAIMessage(chatId, content, type = 'text', imageUrl = null) {
   const msg = { id: uid(), role: 'ai', content, type, imageUrl, time: Date.now() };
   chat.messages.push(msg);
   dbPut('chats', chat);
-  renderMessages(chatId);
+  // 只在這個 chatId 仍是目前活躍視窗時才渲染，避免污染其他聊天室
+  if (state.activeChat === chatId) renderMessages(chatId);
   return msg;
 }
 
@@ -656,7 +699,8 @@ function addUserMessage(chatId, content) {
   const msg = { id: uid(), role: 'user', content, type: 'text', time: Date.now() };
   chat.messages.push(msg);
   dbPut('chats', chat);
-  renderMessages(chatId);
+  // 只在這個 chatId 仍是目前活躍視窗時才渲染
+  if (state.activeChat === chatId) renderMessages(chatId);
   return msg;
 }
 
@@ -711,51 +755,48 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
 
-  // Show user's images in chat
+  // 鎖定這次送出所屬的 chatId — 後續 async 期間即使切換角色也不混淆
+  const thisChatId   = state.activeChat;
+  const thisCharId   = state.activeCharId;
+
   const imagesToSend = [...pendingChatImages];
   pendingChatImages = [];
   renderChatImgPreviewStrip();
 
-  // Display user message with images
-  const chat = state.chats.find(c => c.id === state.activeChat);
+  const chat = state.chats.find(c => c.id === thisChatId);
   if (!chat) return;
 
   if (imagesToSend.length > 0) {
-    // Add each image as a user message
     imagesToSend.forEach(img => {
       const msg = { id: uid(), role: 'user', content: text || '（圖片）', type: 'image', imageUrl: img.dataUrl, time: Date.now() };
       chat.messages.push(msg);
     });
-    // If also text, add after images (combined into first msg already)
     dbPut('chats', chat);
-    renderMessages(state.activeChat);
+    if (state.activeChat === thisChatId) renderMessages(thisChatId);
   } else if (text) {
-    addUserMessage(state.activeChat, text);
+    addUserMessage(thisChatId, text);
   }
 
-  updateChatStats(state.activeCharId);
-  showTyping();
+  updateChatStats(thisCharId);
+  if (state.activeChat === thisChatId) showTyping();
 
   try {
-    const responses = await callGemini(state.activeChat, text || '（圖片）', null, imagesToSend);
-    hideTyping();
+    const responses = await callGemini(thisChatId, text || '（圖片）', null, imagesToSend);
+    if (state.activeChat === thisChatId) hideTyping();
     for (let i = 0; i < responses.length; i++) {
-      // 模擬真實打字速度：每個中文字約 60ms，加上基礎延遲，讓多段訊息有節奏感
       const msgLen = responses[i].length;
       const typingDelay = Math.min(300 + msgLen * 55, 2200) + Math.random() * 300;
       await delay(typingDelay);
-      addAIMessage(state.activeChat, responses[i]);
-      // 不是最後一則才顯示 typing indicator
+      addAIMessage(thisChatId, responses[i]);  // addAIMessage 自己也有 activeChat 檢查
       if (i < responses.length - 1) {
-        showTyping();
-        // 短暫停頓後繼續（模擬傳完一則、思考下一則的感覺）
+        if (state.activeChat === thisChatId) showTyping();
         await delay(350 + Math.random() * 250);
       }
     }
-    await autoUpdateMemory(state.activeChat);
+    await autoUpdateMemory(thisChatId);
   } catch(err) {
-    hideTyping();
-    addAIMessage(state.activeChat, `（系統錯誤：${err.message}）`);
+    if (state.activeChat === thisChatId) hideTyping();
+    addAIMessage(thisChatId, `（系統錯誤：${err.message}）`);
   }
 }
 
@@ -3097,18 +3138,7 @@ function toggleRealWorldEvents() {
 }
 
 // ─── CONTEXT MENU ────────────────────────────────────
-let longPressTimer = null;
-
-function handleLongPress(msgId, e) {
-  longPressTimer = setTimeout(() => {
-    const touch = e.touches[0];
-    showCtxMenu({ clientX: touch.clientX, clientY: touch.clientY }, msgId);
-  }, 500);
-}
-
-function clearLongPress() {
-  clearTimeout(longPressTimer);
-}
+// (longPressTimer is now local per message row — see renderMessages)
 
 function showCtxMenu(e, msgId) {
   state.ctxTargetMsgId = msgId;

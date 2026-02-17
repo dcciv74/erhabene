@@ -720,29 +720,43 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
 }
 
 function splitIntoMessages(text) {
-  // Split by newlines or sentence endings to simulate LINE bubbles
+  // Split by newlines to simulate LINE multi-bubble style
   const lines = text.split(/\n+/).filter(l => l.trim());
-  if (lines.length <= 1) {
-    // Split long text by sentences
-    const sentences = text.match(/[^。！？…\n]+[。！？…\n]*/g) || [text];
+  if (lines.length > 1) {
+    // Group short adjacent lines so we don't create too many tiny bubbles
     const chunks = [];
     let current = '';
-    sentences.forEach(s => {
-      if ((current + s).length > 60 && current) {
+    lines.forEach(line => {
+      if (current && (current.length + line.length) > 80) {
         chunks.push(current.trim());
-        current = s;
+        current = line;
       } else {
-        current += s;
+        current = current ? current + '\n' + line : line;
       }
     });
     if (current.trim()) chunks.push(current.trim());
-    return chunks.filter(c => c).slice(0, 4);
+    return chunks.filter(c => c).slice(0, 5);
   }
-  return lines.slice(0, 4);
+  // Single block — split by sentence endings
+  const sentences = text.match(/[^。！？…]+[。！？…]*/g) || [text];
+  const chunks = [];
+  let current = '';
+  sentences.forEach(s => {
+    // Group sentences until ~100 chars to avoid too many tiny bubbles
+    if (current && (current.length + s.length) > 100) {
+      chunks.push(current.trim());
+      current = s;
+    } else {
+      current += s;
+    }
+  });
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.filter(c => c).slice(0, 5);
 }
 
 // ─── GEMINI IMAGE GEN ─────────────────────────────
-// refImages: [{base64: 'data:image/png;base64,...', mimeType: 'image/png'}]
+// refImages: [{base64: 'data:image/png;base64,...'}]
+// getAvatarRef() returns { base64: dataUrl } — we handle both formats here
 async function callGeminiImage(prompt, refImages = []) {
   const imageModel = 'gemini-3-pro-image-preview';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${imageModel}:generateContent?key=${state.apiKey}`;
@@ -750,14 +764,21 @@ async function callGeminiImage(prompt, refImages = []) {
   // 組裝 parts：先放參考圖，再放文字 prompt
   const parts = [];
   for (const img of refImages) {
-    if (!img?.base64) continue;
-    // data:image/png;base64,XXXX → 取出 mimeType 和 data
-    const match = img.base64.match(/^data:([^;]+);base64,(.+)$/);
-    if (!match) continue;
-    parts.push({
-      inlineData: { mimeType: match[1], data: match[2] }
-    });
+    if (!img) continue;
+    // Support both {base64: dataUrl} from getAvatarRef and {base64, mimeType} raw formats
+    const dataUrl = img.base64 || img.dataUrl || null;
+    if (!dataUrl) continue;
+    // Extract mimeType and raw base64 from data URL
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/s);
+    if (!match) {
+      console.warn('[callGeminiImage] Could not parse image dataUrl:', dataUrl?.slice(0,60));
+      continue;
+    }
+    const mimeType = img.mimeType || match[1];
+    const rawB64   = match[2];
+    parts.push({ inlineData: { mimeType, data: rawB64 } });
   }
+  console.log('[callGeminiImage] sending', parts.length - 0, 'ref parts (images) + 1 text part');
   parts.push({ text: prompt });
 
   const body = {
@@ -870,18 +891,28 @@ async function doTriggerImageGen() {
     const styleDesc = styleDescMap[_imageGenStyle] || styleDescMap.anime;
 
     const isDuo = _imageGenType === 'duo';
+    // Stronger ref note when images are available
     const refNote = refImages.length > 0
-      ? 'Use the provided reference image(s) to keep the character appearance consistent. '
+      ? 'IMPORTANT: Use the provided reference image(s) to maintain exact character appearance and design. '
       : '';
     const personaNote = isDuo && persona
-      ? ` alongside ${persona.name}${persona.desc ? ` (${persona.desc.slice(0,60)})` : ''}`
+      ? ` alongside ${persona.name}${persona.desc ? ` (${persona.desc.slice(0,80)})` : ''}`
       : '';
 
-    const prompt = `${refNote}${styleDesc}.
-Character: ${char.name}${char.desc ? ` — ${char.desc.slice(0,120)}` : ''}${personaNote}.
-${recentMsgs ? `Scene inspired by recent conversation: ${recentMsgs.slice(0,200)}.` : ''}
-${extraPrompt ? `Additional details: ${extraPrompt}.` : ''}
-NOT photorealistic. No real people. No text in image. Illustrated art only.`;
+    // Dynamic scene from recent conversation — not hardcoded
+    const sceneContext = recentMsgs
+      ? `Scene/mood inspired by this conversation (do NOT include text in image): "${recentMsgs.slice(0,200)}"`
+      : `A moment from ${char.name}'s daily life`;
+
+    const prompt = [
+      refNote,
+      `Style: ${styleDesc}.`,
+      `Character: ${char.name}${char.desc ? ` — ${char.desc.slice(0,150)}` : ''}${personaNote}.`,
+      sceneContext + '.',
+      extraPrompt ? `Additional details: ${extraPrompt}.` : '',
+      'NOT photorealistic. NOT a photograph. Pure illustrated art only. No text, no watermarks, no logos.',
+    ].filter(Boolean).join(' ');
+    console.log('[ChatImageGen] refImages:', refImages.length, '| style:', _imageGenStyle, '| type:', _imageGenType);
 
     const imageUrl = await callGeminiImage(prompt, refImages);
     addAIMessage(state.activeChat, '📸 生成了一張圖片', 'image', imageUrl);
@@ -2049,30 +2080,40 @@ function socialToggleImageStyleField() {
 
 // Build social image prompt based on option key
 function buildSocialImagePrompt(option, char, persona, postContent) {
-  const charDesc = char.desc?.slice(0, 120) || '';
-  const personaDesc = persona ? ` 正在與 ${persona.name} 在一起。${persona.desc?.slice(0,60)||''}` : '';
-  const sceneHint = postContent?.slice(0, 120) || '';
+  const charDesc = char.desc?.slice(0, 150) || '';
+  const sceneHint = postContent?.slice(0, 200) || '';
+  const isDuo = option.startsWith('duo');
+  const isSelfie = option.startsWith('selfie');
 
   const styleMap = {
-    solo_anime:      'anime illustration style, soft cel shading, detailed',
-    solo_watercolor: 'soft watercolor illustration, pastel palette, dreamy',
-    solo_chibi:      'chibi cute style, rounded features, big eyes, kawaii',
-    duo_anime:       'anime illustration style, two characters together, soft lighting',
-    duo_watercolor:  'soft watercolor illustration, two characters, pastel palette',
-    selfie_anime:    'anime selfie style, character looking at viewer, close-up',
-    auto:            'anime illustration style, scene from daily life, soft pastel',
+    solo_anime:      'anime illustration, soft cel shading, clean lineart, expressive eyes',
+    solo_watercolor: 'soft watercolor illustration, pastel palette, loose brushwork, dreamy atmosphere',
+    solo_chibi:      'chibi kawaii style, super deformed proportions, big round eyes, cute and soft',
+    duo_anime:       'anime illustration, two characters side by side, warm soft lighting, expressive',
+    duo_watercolor:  'soft watercolor illustration, two characters together, pastel tones, gentle mood',
+    selfie_anime:    'anime style close-up, character holding phone, cheerful expression, from above angle',
+    auto:            'anime illustration, detailed background, dynamic composition, vibrant but soft colors',
   };
   const styleDesc = styleMap[option] || styleMap.auto;
-  const isDuo = option.startsWith('duo');
 
-  const refNote = (char.avatar?.startsWith('data:') || persona?.avatar?.startsWith('data:'))
-    ? 'Use provided reference image(s) to keep character appearance consistent. '
+  // Always attach ref note if any image available (not just duo)
+  const hasRef = char.avatar?.startsWith('data:') || (isDuo && persona?.avatar?.startsWith('data:'));
+  const refNote = hasRef
+    ? 'IMPORTANT: Use the provided reference image(s) to maintain exact character appearance and design. '
     : '';
 
-  if (isDuo) {
-    return `${refNote}${styleDesc}. Scene: ${char.name}${charDesc ? ` (${charDesc})` : ''}${personaDesc}. Context: ${sceneHint}. NOT photorealistic. No real people. Illustrated art only.`;
-  }
-  return `${refNote}${styleDesc}. Character: ${char.name}${charDesc ? ` — ${charDesc}` : ''}. Context: ${sceneHint}. NOT photorealistic. No real people. Illustrated art only.`;
+  // Dynamic scene from post content — never hardcoded
+  const sceneDesc = sceneHint
+    ? `Scene/mood derived from this text (do NOT include any text in the image): "${sceneHint}"`
+    : `A moment in ${char.name}'s daily life`;
+
+  const charPart = `${char.name}${charDesc ? ` (${charDesc})` : ''}`;
+  const personaPart = isDuo && persona
+    ? ` together with ${persona.name}${persona.desc ? ` (${persona.desc.slice(0,80)})` : ''}`
+    : '';
+  const viewPart = isSelfie ? 'POV selfie composition, character looking directly at viewer. ' : '';
+
+  return `${refNote}Style: ${styleDesc}. ${viewPart}Characters: ${charPart}${personaPart}. ${sceneDesc}. NOT photorealistic. NOT a photograph. Pure illustrated art only. No text, no watermarks, no logos.`;
 }
 
 async function aiPostSocial() {
@@ -2133,7 +2174,7 @@ ${currentSocialTab === 'plurk' ? '可以加幾個 hashtag，放在最後。' : '
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-        generationConfig: { temperature: 1.0, maxOutputTokens: 1024 }
+        generationConfig: { temperature: 1.0, maxOutputTokens: 2048 }
       })
     });
     const data = await res.json();
@@ -2145,17 +2186,20 @@ ${currentSocialTab === 'plurk' ? '可以加幾個 hashtag，放在最後。' : '
     if (imageOption !== 'none') {
       try {
         const refImages = [];
+        // Always attach char avatar as reference for ALL image options
         const charRef = getAvatarRef(char.avatar);
         if (charRef) refImages.push(charRef);
+        // For duo options, also attach persona avatar
         if (imageOption.startsWith('duo') && persona?.avatar) {
           const personaRef = getAvatarRef(persona.avatar);
           if (personaRef) refImages.push(personaRef);
         }
         const imgPrompt = buildSocialImagePrompt(imageOption, char, persona, content);
+        console.log('[Social Image] refImages count:', refImages.length, '| prompt:', imgPrompt.slice(0,120));
         imageUrl = await callGeminiImage(imgPrompt, refImages);
       } catch(e) {
-        console.warn('Social image gen failed:', e);
-        showToast('⚠️ 圖片生成失敗，但貼文已發布');
+        console.warn('Social image gen failed:', e.message, e);
+        showToast('⚠️ 圖片生成失敗：' + e.message);
       }
     }
 

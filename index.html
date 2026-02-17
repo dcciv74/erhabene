@@ -914,6 +914,91 @@ body {
   line-height: 1.5;
 }
 
+/* ─── LOREBOOK ─── */
+.lb-entry {
+  border: 1.5px solid rgba(201,184,232,0.25);
+  border-radius: 12px;
+  overflow: hidden;
+  background: white;
+}
+.lb-entry.lb-open { border-color: var(--lavender); }
+
+.lb-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.55rem 0.8rem;
+  cursor: pointer;
+  background: var(--lavender-soft);
+  user-select: none;
+  gap: 0.5rem;
+}
+.lb-entry.lb-open .lb-header { background: rgba(201,184,232,0.25); }
+.lb-header:hover { background: rgba(201,184,232,0.2); }
+
+.lb-entry-left { display: flex; align-items: center; gap: 0.45rem; min-width: 0; flex: 1; }
+.lb-entry-right { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+
+.lb-enable-cb { width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; accent-color: var(--lavender); }
+.lb-badge { font-size: 0.7rem; padding: 0.1rem 0.35rem; border-radius: 5px; font-weight: 600; }
+.lb-const { background: rgba(168,216,168,0.3); color: #4a8a4a; }
+.lb-sel   { background: rgba(184,212,232,0.4); color: #4a6a8a; }
+
+.lb-name { font-size: 0.83rem; color: var(--text-dark); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.lb-keys-preview { font-size: 0.72rem; color: var(--text-light); }
+.lb-order { font-size: 0.68rem; color: var(--lavender); font-family: monospace;
+  background: rgba(201,184,232,0.2); padding: 0.1rem 0.35rem; border-radius: 5px; }
+.lb-del-btn { background: none; border: none; cursor: pointer; color: #c88;
+  font-size: 1rem; line-height: 1; padding: 0 0.2rem; }
+.lb-del-btn:hover { color: #e87878; }
+
+.lb-body { padding: 0.9rem 1rem; border-top: 1px solid rgba(201,184,232,0.2);
+  display: flex; flex-direction: column; gap: 0.6rem; }
+.lb-row-2col { display: flex; gap: 0.6rem; }
+.lb-row-flags { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; }
+.lb-field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; }
+.lb-label { font-size: 0.72rem; color: var(--text-light); font-weight: 500; }
+.lb-input {
+  padding: 0.45rem 0.7rem;
+  border: 1.5px solid var(--lavender-light);
+  border-radius: 9px;
+  font-family: inherit; font-size: 0.83rem;
+  color: var(--text-dark); background: var(--lavender-soft);
+  outline: none; width: 100%;
+}
+.lb-input:focus { border-color: var(--lavender); }
+.lb-select {
+  padding: 0.45rem 0.7rem;
+  border: 1.5px solid var(--lavender-light);
+  border-radius: 9px;
+  font-family: inherit; font-size: 0.83rem;
+  color: var(--text-dark); background: var(--lavender-soft);
+  outline: none; width: 100%;
+}
+.lb-textarea {
+  padding: 0.55rem 0.8rem;
+  border: 1.5px solid var(--lavender-light);
+  border-radius: 9px;
+  font-family: inherit; font-size: 0.83rem;
+  color: var(--text-dark); background: var(--lavender-soft);
+  outline: none; resize: vertical; min-height: 90px; line-height: 1.55; width: 100%;
+}
+.lb-textarea:focus { border-color: var(--lavender); }
+.lb-checkbox-label { display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.78rem; color: var(--text-mid); cursor: pointer; white-space: nowrap; }
+.lb-checkbox-label input { accent-color: var(--lavender); cursor: pointer; }
+
+.lb-save-btn {
+  flex: 1; padding: 0.55rem; background: linear-gradient(135deg,var(--lavender),var(--milk-blue));
+  border: none; border-radius: 10px; color: white;
+  font-family: inherit; font-size: 0.85rem; cursor: pointer;
+}
+.lb-cancel-btn {
+  padding: 0.55rem 1rem;
+  background: var(--lavender-soft); border: 1px solid var(--lavender-light);
+  border-radius: 10px; color: var(--text-mid);
+  font-family: inherit; font-size: 0.85rem; cursor: pointer;
+}
+
 /* ─── SETTINGS PAGE ─── */
 #settings-page { background: var(--beige-soft); overflow-y: auto; }
 
@@ -1285,6 +1370,7 @@ body {
           <button class="toolbar-btn" onclick="openStickerPicker()" title="(表情)">🎭</button>
           <button class="toolbar-btn" onclick="openModal('preset-modal')" title="Preset">📋</button>
           <button class="toolbar-btn" id="memory-toggle-btn" onclick="toggleMemoryPanel()" title="記憶">🧠</button>
+          <button class="toolbar-btn" onclick="triggerAutoMsgNow()" title="讓角色立刻傳訊息" style="margin-left:auto;">💬✨</button>
         </div>
         <div class="input-row">
           <textarea id="msg-input" placeholder="傳訊息..." rows="1"
@@ -1643,17 +1729,18 @@ body {
 
 <!-- LOREBOOK MODAL -->
 <div class="modal-overlay" id="lorebook-modal">
-  <div class="modal">
-    <div class="modal-title">📚 Lorebook</div>
-    <div id="lorebook-list" style="margin-bottom:1rem;max-height:300px;overflow-y:auto;"></div>
-    <button onclick="addLorebookEntry()" style="width:100%;padding:0.6rem;background:var(--lavender-soft);border:1.5px dashed rgba(201,184,232,0.4);border-radius:12px;font-family:inherit;font-size:0.85rem;color:var(--text-mid);cursor:pointer;">＋ 新增 Lorebook 條目</button>
-    <div class="modal-actions">
-      <button class="modal-btn secondary" onclick="closeModal('lorebook-modal')">關閉</button>
-      <button class="modal-btn primary" onclick="saveLorebook()">儲存</button>
+  <div class="modal" style="width:min(640px,96vw);max-height:88dvh;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+      <div class="modal-title" style="margin:0;">📚 Lorebook / World Info</div>
+      <div style="font-size:0.72rem;color:var(--text-light);" id="lb-count"></div>
+    </div>
+    <div id="lorebook-list" style="margin-bottom:0.8rem;max-height:calc(88dvh - 160px);overflow-y:auto;display:flex;flex-direction:column;gap:0.4rem;"></div>
+    <div style="display:flex;gap:0.5rem;">
+      <button onclick="addLorebookEntry()" style="flex:1;padding:0.6rem;background:var(--lavender-soft);border:1.5px dashed rgba(201,184,232,0.5);border-radius:12px;font-family:inherit;font-size:0.85rem;color:var(--text-mid);cursor:pointer;transition:all 0.15s;">＋ 新增條目</button>
+      <button class="modal-btn primary" onclick="saveLorebook()" style="flex:0 0 auto;padding:0.6rem 1.2rem;">完成</button>
     </div>
   </div>
 </div>
-
 <!-- PERSONA MODAL -->
 <div class="modal-overlay" id="persona-modal">
   <div class="modal">

@@ -197,6 +197,9 @@ function switchPage(page) {
   const sidebarTitle = document.getElementById('sidebar-title');
   const sidebarAddBtn = document.getElementById('sidebar-add-btn');
 
+  // 切換任何頁面都先收合底部 spell-panel
+  document.getElementById('spell-panel')?.classList.remove('open');
+
   // 咒語舞台：完全佔滿畫面，隱藏 sidebar
   if (page === 'cctv') {
     sidebar.style.display = 'none';
@@ -224,8 +227,6 @@ function switchPage(page) {
     renderSocialFeed();
   } else if (page === 'diary') {
     initDiary();
-  } else if (page === 'settings') {
-    // nothing extra
   }
 }
 
@@ -626,16 +627,27 @@ function splitIntoMessages(text) {
 }
 
 // ─── GEMINI IMAGE GEN ─────────────────────────────
-async function callGeminiImage(prompt) {
-  // 使用專用圖片生成模型
+// refImages: [{base64: 'data:image/png;base64,...', mimeType: 'image/png'}]
+async function callGeminiImage(prompt, refImages = []) {
   const imageModel = 'gemini-3-pro-image-preview';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${imageModel}:generateContent?key=${state.apiKey}`;
 
+  // 組裝 parts：先放參考圖，再放文字 prompt
+  const parts = [];
+  for (const img of refImages) {
+    if (!img?.base64) continue;
+    // data:image/png;base64,XXXX → 取出 mimeType 和 data
+    const match = img.base64.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) continue;
+    parts.push({
+      inlineData: { mimeType: match[1], data: match[2] }
+    });
+  }
+  parts.push({ text: prompt });
+
   const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      responseModalities: ['TEXT', 'IMAGE']
-    }
+    contents: [{ parts }],
+    generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
   };
 
   const res = await fetch(url, {
@@ -645,21 +657,23 @@ async function callGeminiImage(prompt) {
   });
 
   const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || 'Image gen failed: ' + res.status);
 
-  if (!res.ok) {
-    throw new Error(data?.error?.message || 'Image gen failed: ' + res.status);
-  }
-
-  const parts = data.candidates?.[0]?.content?.parts || [];
-  for (const part of parts) {
+  const resParts = data.candidates?.[0]?.content?.parts || [];
+  for (const part of resParts) {
     if (part.inlineData?.mimeType?.startsWith('image/')) {
       return 'data:' + part.inlineData.mimeType + ';base64,' + part.inlineData.data;
     }
   }
+  const textPart = resParts.find(p => p.text);
+  throw new Error(textPart?.text || '未收到圖片，請確認模型是否支援圖片生成');
+}
 
-  // 若沒有圖片但有文字，說明 API 拒絕或格式問題
-  const textPart = parts.find(p => p.text);
-  throw new Error(textPart?.text || '未收到圖片資料，請確認模型名稱是否支援圖片生成');
+// 把 emoji/URL avatar 轉成可用的 base64 ref（只有 base64 格式才上傳）
+function getAvatarRef(avatarStr) {
+  if (!avatarStr) return null;
+  if (avatarStr.startsWith('data:image')) return { base64: avatarStr };
+  return null; // emoji 或 URL 不上傳
 }
 
 async function triggerImageGen() {
@@ -670,10 +684,30 @@ async function triggerImageGen() {
 
   showToast('🖼️ 正在生成圖片...');
   try {
-    // Build context-aware prompt
     const recentMsgs = chat.messages.slice(-5).map(m => m.content).join(' ');
-    const prompt = `Anime style illustration. Character: ${char.name}. ${char.desc?.slice(0,100) || ''}. Scene based on recent conversation: ${recentMsgs.slice(0,200)}. Soft watercolor aesthetic, pastel colors.`;
-    const imageUrl = await callGeminiImage(prompt);
+
+    // 收集參考圖：角色頭貼 + persona 頭貼
+    const refImages = [];
+    const charRef = getAvatarRef(char.avatar);
+    if (charRef) refImages.push(charRef);
+
+    const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+    if (persona?.avatar) {
+      const personaRef = getAvatarRef(persona.avatar);
+      if (personaRef) refImages.push(personaRef);
+    }
+
+    const hasRefs = refImages.length > 0;
+    const prompt = hasRefs
+      ? `Based on the reference image(s) provided (use them as style/character reference), create an anime-style illustration.
+Character: ${char.name}. ${char.desc?.slice(0,100) || ''}.
+Scene based on recent conversation: ${recentMsgs.slice(0,200)}.
+Soft watercolor aesthetic, pastel colors. Keep character design consistent with reference.`
+      : `Anime style illustration. Character: ${char.name}. ${char.desc?.slice(0,100) || ''}.
+Scene based on recent conversation: ${recentMsgs.slice(0,200)}.
+Soft watercolor aesthetic, pastel colors.`;
+
+    const imageUrl = await callGeminiImage(prompt, refImages);
     addAIMessage(state.activeChat, '📸 生成了一張圖片', 'image', imageUrl);
     hideTyping();
   } catch(err) {
@@ -766,56 +800,179 @@ function toggleMemoryPanel() {
 }
 
 // ─── LOREBOOK ───────────────────────────────────────
+// ST-compatible fields: {id, name, keys, secondary_keys, content, comment,
+//   enabled, constant, selective, case_sensitive,
+//   insertion_order, position, scan_depth, token_budget}
 function getLorebookMatches(text) {
   return state.lorebook
-    .filter(entry => entry.enabled && entry.keywords.some(kw => text.includes(kw)))
+    .filter(entry => {
+      if (!entry.enabled) return false;
+      if (entry.constant) return true;
+      const haystack = entry.case_sensitive ? text : text.toLowerCase();
+      const keys = entry.keys || entry.keywords || [];
+      return keys.some(kw => kw && haystack.includes(entry.case_sensitive ? kw : kw.toLowerCase()));
+    })
+    .sort((a, b) => (a.insertion_order || 100) - (b.insertion_order || 100))
     .map(entry => entry.content);
 }
 
+let lorebookEditId = null;
+
 function renderLorebookList() {
   const list = document.getElementById('lorebook-list');
-  list.innerHTML = state.lorebook.map(e => `
-    <div style="background:var(--lavender-soft);border-radius:12px;padding:0.7rem 0.9rem;margin-bottom:0.5rem;border:1px solid rgba(201,184,232,0.2);">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem;">
-        <div style="font-size:0.78rem;color:var(--lavender);font-weight:500">關鍵字: ${e.keywords.join(', ')}</div>
-        <div style="display:flex;gap:0.3rem;">
-          <input type="checkbox" ${e.enabled ? 'checked' : ''} onchange="toggleLorebook('${e.id}',this.checked)" style="cursor:pointer">
-          <button onclick="deleteLorebook('${e.id}')" style="background:none;border:none;cursor:pointer;color:#e87878;font-size:0.8rem">×</button>
+  if (!state.lorebook.length) {
+    list.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:1.5rem 1rem;">尚無條目 — 點擊下方「＋ 新增條目」</div>';
+    return;
+  }
+  list.innerHTML = state.lorebook.map(e => {
+    const keys = e.keys || e.keywords || [];
+    const keyStr = keys.join(', ') || '（無關鍵字）';
+    const isOpen = lorebookEditId === e.id;
+    const safeContent = (e.content || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const safeName = (e.name || '').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    const safeKeys = keys.join(', ').replace(/"/g,'&quot;');
+    const safeSecKeys = (e.secondary_keys || []).join(', ').replace(/"/g,'&quot;');
+    const safeComment = (e.comment || '').replace(/"/g,'&quot;');
+    return `<div class="lb-entry${isOpen?' lb-open':''}" id="lb-entry-${e.id}">
+      <div class="lb-header" onclick="toggleLorebookEntry('${e.id}')">
+        <div class="lb-entry-left">
+          <input type="checkbox" class="lb-enable-cb" ${e.enabled?'checked':''}
+            onclick="event.stopPropagation();lbToggleEnabled('${e.id}',this.checked)" title="啟用">
+          ${e.constant?'<span class="lb-badge lb-const" title="Always On">∞</span>':''}
+          ${e.selective?'<span class="lb-badge lb-sel" title="Selective">◈</span>':''}
+          <span class="lb-name">${safeName||'（未命名）'}</span>
+        </div>
+        <div class="lb-entry-right">
+          <span class="lb-keys-preview">${keyStr.slice(0,28)}${keyStr.length>28?'…':''}</span>
+          <span class="lb-order" title="Insertion Order">#${e.insertion_order||100}</span>
+          <button onclick="event.stopPropagation();deleteLorebook('${e.id}')" class="lb-del-btn">×</button>
         </div>
       </div>
-      <div style="font-size:0.82rem;color:var(--text-dark)">${e.content.slice(0,100)}...</div>
-    </div>
-  `).join('') || '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:1rem;">還沒有 Lorebook 條目</div>';
+      ${isOpen ? `<div class="lb-body">
+        <div class="lb-row-2col">
+          <div class="lb-field" style="flex:2">
+            <label class="lb-label">名稱（Entry Name）</label>
+            <input class="lb-input" id="lb-name-${e.id}" value="${safeName}" placeholder="e.g. World Building">
+          </div>
+          <div class="lb-field" style="flex:0 0 80px">
+            <label class="lb-label">Order</label>
+            <input class="lb-input" type="number" id="lb-order-${e.id}" value="${e.insertion_order||100}" min="0" max="999">
+          </div>
+        </div>
+        <div class="lb-field">
+          <label class="lb-label">Primary Keys（逗號分隔，匹配任一即觸發）</label>
+          <input class="lb-input" id="lb-keys-${e.id}" value="${safeKeys}" placeholder="keyword1, keyword2, ...">
+        </div>
+        <div class="lb-field">
+          <label class="lb-label">Secondary Keys（Selective 模式需同時匹配）</label>
+          <input class="lb-input" id="lb-sec-${e.id}" value="${safeSecKeys}" placeholder="secondary1, secondary2">
+        </div>
+        <div class="lb-field">
+          <label class="lb-label">Content（注入 context 的內容）</label>
+          <textarea class="lb-textarea" id="lb-content-${e.id}">${safeContent}</textarea>
+        </div>
+        <div class="lb-field">
+          <label class="lb-label">Comment（備註，不會注入）</label>
+          <input class="lb-input" id="lb-comment-${e.id}" value="${safeComment}" placeholder="自用備註">
+        </div>
+        <div class="lb-row-flags">
+          <div class="lb-field">
+            <label class="lb-label">Position</label>
+            <select class="lb-select" id="lb-pos-${e.id}">
+              <option value="before_char" ${(e.position||'before_char')==='before_char'?'selected':''}>↑ Before Char Desc</option>
+              <option value="after_char" ${e.position==='after_char'?'selected':''}>↓ After Char Desc</option>
+              <option value="before_prompt" ${e.position==='before_prompt'?'selected':''}>↑ Before Prompt</option>
+              <option value="at_depth" ${e.position==='at_depth'?'selected':''}>@ Depth (AN)</option>
+            </select>
+          </div>
+          <div class="lb-field" style="flex:0 0 70px">
+            <label class="lb-label">Scan Depth</label>
+            <input class="lb-input" type="number" id="lb-depth-${e.id}" value="${e.scan_depth||4}" min="1" max="200">
+          </div>
+          <div class="lb-field" style="flex:0 0 80px">
+            <label class="lb-label">Token Budget</label>
+            <input class="lb-input" type="number" id="lb-budget-${e.id}" value="${e.token_budget||400}" min="0" max="8192">
+          </div>
+        </div>
+        <div class="lb-row-flags" style="margin-top:0.5rem;gap:1rem;">
+          <label class="lb-checkbox-label"><input type="checkbox" id="lb-const-${e.id}" ${e.constant?'checked':''}><span>Constant（永遠注入）</span></label>
+          <label class="lb-checkbox-label"><input type="checkbox" id="lb-sel-${e.id}" ${e.selective?'checked':''}><span>Selective</span></label>
+          <label class="lb-checkbox-label"><input type="checkbox" id="lb-case-${e.id}" ${e.case_sensitive?'checked':''}><span>Case Sensitive</span></label>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.9rem;">
+          <button class="lb-save-btn" onclick="lbSaveEntry('${e.id}')">✓ 儲存</button>
+          <button class="lb-cancel-btn" onclick="lbCancelEdit()">取消</button>
+        </div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
 }
 
-function addLorebookEntry() {
-  const keywords = prompt('輸入關鍵字（用逗號分隔）：');
-  if (!keywords) return;
-  const content = prompt('輸入內容：');
-  if (!content) return;
-  const entry = {
-    id: uid(),
-    keywords: keywords.split(',').map(k => k.trim()),
-    content,
-    enabled: true
-  };
-  state.lorebook.push(entry);
-  dbPut('lorebook', entry);
+function toggleLorebookEntry(id) {
+  lorebookEditId = lorebookEditId === id ? null : id;
   renderLorebookList();
+  if (lorebookEditId === id) {
+    setTimeout(() => document.getElementById('lb-entry-' + id)?.scrollIntoView({behavior:'smooth',block:'nearest'}), 60);
+  }
 }
 
-function toggleLorebook(id, enabled) {
+function lbCancelEdit() { lorebookEditId = null; renderLorebookList(); }
+
+function lbToggleEnabled(id, enabled) {
   const e = state.lorebook.find(l => l.id === id);
   if (e) { e.enabled = enabled; dbPut('lorebook', e); }
 }
 
+function lbSaveEntry(id) {
+  const e = state.lorebook.find(l => l.id === id);
+  if (!e) return;
+  e.name    = document.getElementById('lb-name-'+id)?.value.trim() || '';
+  e.keys    = (document.getElementById('lb-keys-'+id)?.value||'').split(',').map(k=>k.trim()).filter(Boolean);
+  e.secondary_keys = (document.getElementById('lb-sec-'+id)?.value||'').split(',').map(k=>k.trim()).filter(Boolean);
+  e.content = document.getElementById('lb-content-'+id)?.value || '';
+  e.comment = document.getElementById('lb-comment-'+id)?.value.trim() || '';
+  e.position = document.getElementById('lb-pos-'+id)?.value || 'before_char';
+  e.insertion_order = parseInt(document.getElementById('lb-order-'+id)?.value) || 100;
+  e.scan_depth = parseInt(document.getElementById('lb-depth-'+id)?.value) || 4;
+  e.token_budget = parseInt(document.getElementById('lb-budget-'+id)?.value) || 400;
+  e.constant = document.getElementById('lb-const-'+id)?.checked || false;
+  e.selective = document.getElementById('lb-sel-'+id)?.checked || false;
+  e.case_sensitive = document.getElementById('lb-case-'+id)?.checked || false;
+  e.keywords = e.keys; // backward compat
+  dbPut('lorebook', e);
+  lorebookEditId = null;
+  renderLorebookList();
+  showToast('✓ 條目已儲存');
+}
+
+function addLorebookEntry() {
+  const entry = {
+    id: uid(), name: '', keys: [], keywords: [], secondary_keys: [], content: '',
+    comment: '', enabled: true, constant: false, selective: false, case_sensitive: false,
+    insertion_order: 100, position: 'before_char', scan_depth: 4, token_budget: 400
+  };
+  state.lorebook.push(entry);
+  dbPut('lorebook', entry);
+  lorebookEditId = entry.id;
+  renderLorebookList();
+  setTimeout(() => {
+    document.getElementById('lb-entry-'+entry.id)?.scrollIntoView({behavior:'smooth',block:'nearest'});
+    document.getElementById('lb-name-'+entry.id)?.focus();
+  }, 60);
+}
+
+function toggleLorebook(id, enabled) { lbToggleEnabled(id, enabled); }
+
 function deleteLorebook(id) {
+  if (!confirm('確認刪除此條目？')) return;
   state.lorebook = state.lorebook.filter(l => l.id !== id);
   dbDelete('lorebook', id);
+  if (lorebookEditId === id) lorebookEditId = null;
   renderLorebookList();
 }
 
 async function saveLorebook() {
+  if (lorebookEditId) lbSaveEntry(lorebookEditId);
   closeModal('lorebook-modal');
   showToast('✓ Lorebook 已儲存');
 }

@@ -841,38 +841,18 @@ body {
   font-style: italic;
 }
 
-/* ─── CCTV PAGE ─── */
-#cctv-page { background: #1a1625; }
+/* ─── SPELL STAGE PAGE（咒語舞台，原 CCTV） ─── */
+#cctv-page {
+  background: var(--beige-soft);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
-.cctv-header {
-  padding: 1rem 1.2rem;
-  background: rgba(30,22,40,0.9);
-  border-bottom: 1px solid rgba(201,184,232,0.1);
-  display: flex; align-items: center; gap: 0.8rem;
-  flex-shrink: 0;
-}
-.cctv-title {
-  font-size: 0.9rem; font-weight: 500;
-  color: rgba(201,184,232,0.8);
-  letter-spacing: 0.1em;
-}
-.cctv-live-badge {
-  padding: 0.2rem 0.6rem;
-  background: rgba(232,160,184,0.2);
-  border: 1px solid rgba(232,160,184,0.4);
-  border-radius: 6px;
-  font-size: 0.68rem; color: #e8a0b8;
-  letter-spacing: 0.1em;
-  display: flex; align-items: center; gap: 0.3rem;
-}
-.cctv-live-badge::before {
-  content: ''; width: 6px; height: 6px;
-  border-radius: 50%; background: #e8a0b8;
-  animation: livePulse 1.5s ease infinite;
-}
-@keyframes livePulse {
-  0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
-}
+#spell-stage-messages::-webkit-scrollbar { width: 4px; }
+#spell-stage-messages::-webkit-scrollbar-thumb { background: var(--lavender-light); border-radius: 2px; }
+
+/* cctv legacy styles removed */
 
 .cctv-char-select-row {
   padding: 0.6rem 1rem;
@@ -1350,8 +1330,9 @@ body {
     </div>
 
     <!-- SPELL STAGE PAGE（原 CCTV） -->
-    <div class="page" id="cctv-page" style="display:flex;flex-direction:column;background:var(--beige-soft);">
+    <div class="page" id="cctv-page">
       <div style="padding:0.8rem 1.2rem;background:var(--header-bg);border-bottom:1px solid rgba(201,184,232,0.2);display:flex;align-items:center;gap:0.8rem;flex-shrink:0;">
+        <button onclick="switchPage('chat')" style="background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:10px;padding:0.3rem 0.7rem;font-family:inherit;font-size:0.8rem;color:var(--text-mid);cursor:pointer;">‹ 聊天</button>
         <div style="font-size:1rem;font-weight:700;color:var(--text-dark);">✨ 咒語舞台</div>
         <div style="font-size:0.72rem;color:var(--text-light);flex:1">獨立空間 · 不套 regex · 支援長篇回覆</div>
         <button onclick="clearSpellStage()" style="background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:10px;padding:0.3rem 0.7rem;font-family:inherit;font-size:0.75rem;color:var(--text-mid);cursor:pointer;">清空</button>

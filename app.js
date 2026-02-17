@@ -193,17 +193,26 @@ function switchPage(page) {
   if (nb) nb.classList.add('active');
   if (bnb) bnb.classList.add('active');
 
-  // sidebar logic
   const sidebar = document.getElementById('sidebar');
   const sidebarTitle = document.getElementById('sidebar-title');
   const sidebarAddBtn = document.getElementById('sidebar-add-btn');
+
+  // 咒語舞台：完全佔滿畫面，隱藏 sidebar
+  if (page === 'cctv') {
+    sidebar.style.display = 'none';
+    renderSpellStage();
+    return;
+  }
+
+  // 其他頁面恢復 sidebar
+  sidebar.style.display = '';
+  sidebar.classList.remove('mobile-open');
 
   if (page === 'chat') {
     sidebarTitle.textContent = '聊天';
     sidebarAddBtn.textContent = '＋ 新增對話';
     sidebarAddBtn.onclick = showAddChatOrChar;
     renderSidebar();
-    sidebar.classList.remove('mobile-open');
   } else if (page === 'chars') {
     sidebar.classList.add('mobile-open');
     renderSidebar('chars');
@@ -213,15 +222,10 @@ function switchPage(page) {
     renderCharsGrid();
   } else if (page === 'social') {
     renderSocialFeed();
-    sidebar.classList.remove('mobile-open');
   } else if (page === 'diary') {
     initDiary();
-    sidebar.classList.remove('mobile-open');
-  } else if (page === 'cctv') {
-    renderSpellStage();
-    sidebar.classList.remove('mobile-open');
   } else if (page === 'settings') {
-    sidebar.classList.remove('mobile-open');
+    // nothing extra
   }
 }
 
@@ -623,12 +627,15 @@ function splitIntoMessages(text) {
 
 // ─── GEMINI IMAGE GEN ─────────────────────────────
 async function callGeminiImage(prompt) {
+  // 使用專用圖片生成模型
   const imageModel = 'gemini-3-pro-image-preview';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${imageModel}:generateContent?key=${state.apiKey}`;
-  
+
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
+    generationConfig: {
+      responseModalities: ['TEXT', 'IMAGE']
+    }
   };
 
   const res = await fetch(url, {
@@ -637,16 +644,22 @@ async function callGeminiImage(prompt) {
     body: JSON.stringify(body)
   });
 
-  if (!res.ok) throw new Error('Image gen failed: ' + res.status);
   const data = await res.json();
-  
+
+  if (!res.ok) {
+    throw new Error(data?.error?.message || 'Image gen failed: ' + res.status);
+  }
+
   const parts = data.candidates?.[0]?.content?.parts || [];
   for (const part of parts) {
     if (part.inlineData?.mimeType?.startsWith('image/')) {
       return 'data:' + part.inlineData.mimeType + ';base64,' + part.inlineData.data;
     }
   }
-  throw new Error('No image in response');
+
+  // 若沒有圖片但有文字，說明 API 拒絕或格式問題
+  const textPart = parts.find(p => p.text);
+  throw new Error(textPart?.text || '未收到圖片資料，請確認模型名稱是否支援圖片生成');
 }
 
 async function triggerImageGen() {
@@ -1856,23 +1869,25 @@ async function sendSpellStageMessage(userText) {
   if (!char) return;
 
   const msgArea = document.getElementById('spell-stage-messages');
+  if (!msgArea) return;
 
   // 顯示 user 訊息（非開始指令）
   if (userText !== '（場景開始）') {
     const userDiv = document.createElement('div');
     userDiv.style.cssText = 'display:flex;justify-content:flex-end;margin-bottom:0.8rem;';
-    userDiv.innerHTML = `<div style="max-width:75%;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));color:white;border-radius:18px 18px 4px 18px;padding:0.75rem 1rem;font-size:0.88rem;line-height:1.6;white-space:pre-wrap;">${userText}</div>`;
+    userDiv.innerHTML = `<div style="max-width:75%;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));color:white;border-radius:18px 18px 4px 18px;padding:0.75rem 1rem;font-size:0.88rem;line-height:1.6;white-space:pre-wrap;">${userText.replace(/</g,'&lt;')}</div>`;
     msgArea.appendChild(userDiv);
   }
 
-  // typing
+  // 顯示 typing 指示
+  const av = char.avatar?.startsWith('data:')||char.avatar?.startsWith('http')
+    ? `<img src="${char.avatar}" style="width:32px;height:32px;border-radius:10px;object-fit:cover;flex-shrink:0;">`
+    : `<span style="font-size:1.4rem;flex-shrink:0;">${char.avatar||'🌸'}</span>`;
+
   const typingDiv = document.createElement('div');
   typingDiv.id = 'spell-stage-typing';
   typingDiv.style.cssText = 'display:flex;align-items:center;gap:0.6rem;margin-bottom:0.8rem;';
-  const av = char.avatar?.startsWith('data:')||char.avatar?.startsWith('http')
-    ? `<img src="${char.avatar}" style="width:32px;height:32px;border-radius:10px;object-fit:cover;">`
-    : `<span style="font-size:1.3rem">${char.avatar||'🌸'}</span>`;
-  typingDiv.innerHTML = `${av}<div class="msg-bubble" style="padding:0.6rem 0.9rem;"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
+  typingDiv.innerHTML = `${av}<div style="background:rgba(255,255,255,0.9);border-radius:4px 18px 18px 18px;padding:0.6rem 0.9rem;box-shadow:0 2px 8px rgba(180,160,210,0.18);"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>`;
   msgArea.appendChild(typingDiv);
   msgArea.scrollTop = msgArea.scrollHeight;
 
@@ -1880,34 +1895,57 @@ async function sendSpellStageMessage(userText) {
   spellStageHistory.push({ role: 'user', parts: [{ text: userText }] });
 
   try {
+    // Gemini API 格式：system_instruction 獨立，contents 是對話歷史
     const body = {
       system_instruction: { parts: [{ text: spellStageSystem }] },
-      contents: spellStageHistory,
-      generationConfig: { temperature: state.temperature, maxOutputTokens: 2048 }
+      contents: spellStageHistory.map(m => ({ role: m.role, parts: m.parts })),
+      generationConfig: {
+        temperature: state.temperature || 1.0,
+        maxOutputTokens: 2048
+      }
     };
+
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
-    const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    if (!res.ok) throw new Error('API Error ' + res.status);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
     const data = await res.json();
-    const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || '...';
+
+    if (!res.ok) {
+      const errMsg = data?.error?.message || `HTTP ${res.status}`;
+      throw new Error(errMsg);
+    }
+
+    const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!replyText) {
+      const reason = data.candidates?.[0]?.finishReason || '未知原因';
+      throw new Error(`未收到回覆 (${reason})`);
+    }
 
     spellStageHistory.push({ role: 'model', parts: [{ text: replyText }] });
 
     // 移除 typing
     document.getElementById('spell-stage-typing')?.remove();
 
-    // 顯示回覆（不套 regex，完整顯示）
+    // 顯示回覆（完整長篇，不套 regex）
     const aiDiv = document.createElement('div');
-    aiDiv.style.cssText = 'display:flex;align-items:flex-start;gap:0.6rem;margin-bottom:1.2rem;';
-    aiDiv.innerHTML = `${av}<div style="max-width:80%;background:rgba(255,255,255,0.92);border-radius:4px 18px 18px 18px;padding:0.9rem 1.1rem;font-size:0.88rem;line-height:1.8;color:var(--text-dark);white-space:pre-wrap;box-shadow:0 2px 8px var(--shadow);">${replyText}</div>`;
+    aiDiv.style.cssText = 'display:flex;align-items:flex-start;gap:0.6rem;margin-bottom:1.4rem;';
+    aiDiv.innerHTML = `${av}<div style="flex:1;background:rgba(255,255,255,0.92);border-radius:4px 18px 18px 18px;padding:1rem 1.2rem;font-size:0.9rem;line-height:1.9;color:var(--text-dark);white-space:pre-wrap;box-shadow:0 2px 12px rgba(180,160,210,0.18);word-break:break-word;">${replyText.replace(/</g,'&lt;')}</div>`;
     msgArea.appendChild(aiDiv);
     msgArea.scrollTop = msgArea.scrollHeight;
+
   } catch(e) {
     document.getElementById('spell-stage-typing')?.remove();
+    // 從歷史移除失敗的 user 訊息，以便重試
+    spellStageHistory.pop();
     const errDiv = document.createElement('div');
-    errDiv.style.cssText = 'text-align:center;color:#e87878;font-size:0.82rem;padding:0.5rem;';
-    errDiv.textContent = '錯誤：' + e.message;
+    errDiv.style.cssText = 'text-align:center;color:#e87878;font-size:0.82rem;padding:0.6rem 1rem;background:rgba(232,120,120,0.08);border-radius:10px;margin-bottom:0.8rem;';
+    errDiv.textContent = `⚠️ 錯誤：${e.message}`;
     msgArea.appendChild(errDiv);
+    msgArea.scrollTop = msgArea.scrollHeight;
   }
 }
 

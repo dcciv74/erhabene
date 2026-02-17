@@ -31,19 +31,24 @@ Stay in character at all times. Be warm, personal, and emotionally real.`,
   diaryMonth: new Date(),
   selectedDiaryDate: null,
   ctxTargetMsgId: null,
-  autoMsgEnabled: true,    // 角色自動傳訊息開關
-  autoMsgHours: 3,         // 幾小時無回覆後自動發
-  autoMsgTimer: null,      // setInterval handle
-  editingCharId: null,     // 正在編輯的角色 id
+  autoMsgEnabled: true,
+  autoMsgHours: 3,
+  autoMsgTimer: null,
+  editingCharId: null,
+  anniversaries: [], // [{id, type, charId, date, customName}]
+  achievements: {},  // {charId: {generated: [{id,name,desc,icon,condition,unlocked}], stats}}
+  theaterStyle: 'romantic',
+  theaterLastPrompt: '',
+  chatStats: {},    // {charId: {days: Set, messages: 0, startDate}}
 };
 
 // ─── INDEXEDDB ─────────────────────────────────────
 function initDB() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open('erhabene', 2);
+    const req = indexedDB.open('erhabene', 3);
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings'].forEach(store => {
+      ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats'].forEach(store => {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store, { keyPath: 'id' });
         }
@@ -82,15 +87,17 @@ function dbDelete(store, id) {
 }
 
 async function loadAllData() {
-  const [chars, chats, personas, lorebook, socialPosts, settings] = await Promise.all([
+  const [chars, chats, personas, lorebook, socialPosts, settings, anniversaries] = await Promise.all([
     dbGetAll('chars'), dbGetAll('chats'), dbGetAll('personas'),
-    dbGetAll('lorebook'), dbGetAll('socialPosts'), dbGetAll('settings')
+    dbGetAll('lorebook'), dbGetAll('socialPosts'), dbGetAll('settings'),
+    dbGetAll('anniversaries')
   ]);
   state.chars = chars;
   state.chats = chats;
   state.personas = personas;
   state.lorebook = lorebook;
   state.socialPosts = socialPosts;
+  state.anniversaries = anniversaries;
 
   // load memories
   const memTx = DB.transaction('memory','readonly');
@@ -107,6 +114,22 @@ async function loadAllData() {
     req.onsuccess = () => res(req.result);
   });
   dAll.forEach(d => { state.diaryEntries[d.id] = d.entries; });
+
+  // load achievements
+  const aTx = DB.transaction('achievements','readonly');
+  const aAll = await new Promise(res => {
+    const req = aTx.objectStore('achievements').getAll();
+    req.onsuccess = () => res(req.result);
+  });
+  aAll.forEach(a => { state.achievements[a.id] = a.data; });
+
+  // load chat stats
+  const stTx = DB.transaction('chatStats','readonly');
+  const stAll = await new Promise(res => {
+    const req = stTx.objectStore('chatStats').getAll();
+    req.onsuccess = () => res(req.result);
+  });
+  stAll.forEach(s => { state.chatStats[s.id] = s.stats; });
 
   // load settings
   const s = settings[0] || {};
@@ -137,7 +160,6 @@ async function saveSettings() {
 // ─── SETUP / ENTER APP ────────────────────────────
 function enterApp() {
   const key = document.getElementById('api-key-input').value.trim();
-  // 優先讀取自訂輸入，否則讀下拉
   const customModel = document.getElementById('model-custom-input-setup')?.value?.trim();
   const selectModel = document.getElementById('model-select')?.value;
   const model = customModel || selectModel || 'gemini-3-flash-preview';
@@ -159,6 +181,9 @@ function enterApp() {
   renderSocialFeed();
   checkRealWorldEvents();
   startAutoMsgTimer();
+  renderAnniversaryList();
+  updateChatStatsCounts();
+  checkAnniversaryReminders();
 }
 
 function modelShortName(m) {
@@ -210,6 +235,12 @@ function switchPage(page) {
     sidebarTitle.textContent = '角色';
     sidebarAddBtn.textContent = '＋ 新增角色';
     sidebarAddBtn.onclick = () => openModal('add-char-modal');
+  } else if (page === 'theater') {
+    renderTheaterCharSelect();
+  } else if (page === 'achievements') {
+    renderAchievementCharSelect();
+    renderAchievements();
+  }
     renderCharsGrid();
   } else if (page === 'social') {
     renderSocialFeed();
@@ -492,18 +523,17 @@ async function sendMessage() {
   input.style.height = 'auto';
 
   addUserMessage(state.activeChat, text);
+  updateChatStats(state.activeCharId); // track stats
   showTyping();
 
   try {
     const responses = await callGemini(state.activeChat, text);
     hideTyping();
-    // Send multiple short messages with delays (LINE style)
     for (let i = 0; i < responses.length; i++) {
       await delay(400 + Math.random() * 600);
       addAIMessage(state.activeChat, responses[i]);
       if (i < responses.length - 1) showTyping();
     }
-    // Auto-update memory
     await autoUpdateMemory(state.activeChat);
   } catch(err) {
     hideTyping();
@@ -1855,12 +1885,28 @@ async function loadDiaryForDate(dateStr) {
 }
 
 async function regenDiary(dateStr, charId) {
-  // 強制清空舊日記再重新生成
+  // 清空舊日記並顯示帶文風選擇的重新生成 UI
   if (state.diaryEntries[charId]) {
     delete state.diaryEntries[charId][dateStr];
   }
-  await loadDiaryForDate(dateStr);
-  await generateDiary(dateStr);
+  const content = document.getElementById('diary-content');
+  content.innerHTML = `
+    <div style="text-align:center;padding:2rem 1rem;">
+      <div style="font-size:1.5rem;margin-bottom:0.8rem;">🔄</div>
+      <div style="font-size:0.88rem;color:var(--text-mid);margin-bottom:1.2rem;">重新生成 ${dateStr} 的日記</div>
+      <div style="margin-bottom:1.2rem;">
+        <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:0.5rem;letter-spacing:0.05em;">選擇文風</div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.4rem;justify-content:center;" id="diary-style-picker">
+          <button onclick="setDiaryStyle('default',this)" class="diary-style-btn ${state.diaryStyle==='default'?'active':''}" data-style="default">📖 自然真摯</button>
+          <button onclick="setDiaryStyle('dark',this)" class="diary-style-btn ${state.diaryStyle==='dark'?'active':''}" data-style="dark">🌑 陰暗憂鬱</button>
+          <button onclick="setDiaryStyle('spicy',this)" class="diary-style-btn ${state.diaryStyle==='spicy'?'active':''}" data-style="spicy">🔥 色色曖昧</button>
+          <button onclick="setDiaryStyle('sunny',this)" class="diary-style-btn ${state.diaryStyle==='sunny'?'active':''}" data-style="sunny">☀️ 陽光開朗</button>
+          <button onclick="setDiaryStyle('cute',this)" class="diary-style-btn ${state.diaryStyle==='cute'?'active':''}" data-style="cute">🌸 輕鬆可愛</button>
+        </div>
+      </div>
+      <button onclick="generateDiary('${dateStr}')" style="padding:0.7rem 1.8rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:14px;color:white;font-family:inherit;font-size:0.88rem;cursor:pointer;font-weight:500;">🔄 重新生成</button>
+    </div>
+  `;
 }
 
 async function generateDiary(dateStr, styleOverride) {
@@ -1869,16 +1915,15 @@ async function generateDiary(dateStr, styleOverride) {
   showToast('📔 生成日記中...');
 
   const stylePromptMap = {
-    default: '文風自然真摯，像真人在寫的私密日記，充滿細節與情感。',
-    dark:    '文風陰暗、壓抑、帶著憂鬱與疏離感，如文學作品般沉重，充滿內心掙扎與黑暗獨白。',
-    spicy:   '文風色色、曖昧撩人，有大膽的感官描寫與性暗示，熱辣露骨但保有文學性。',
-    sunny:   '文風陽光開朗、積極樂觀，充滿正能量與對生活的熱愛，溫暖療癒。',
-    cute:    '文風輕鬆可愛，充滿少女感，語氣俏皮活潑，常用可愛的詞彙與感嘆。',
+    default: '文風自然真摯，像真人在寫的私密日記，充滿細節與情感，有起伏有感悟。',
+    dark:    '文風陰暗、壓抑、帶著憂鬱與疏離感，如文學作品般沉重，充滿內心掙扎與黑暗獨白，帶著詩意的黑暗。',
+    spicy:   '文風色色、曖昧撩人，有大膽的感官描寫與性暗示，熱辣露骨但保有文學性，每個細節都令人臉紅心跳。',
+    sunny:   '文風陽光開朗、積極樂觀，充滿正能量與對生活的熱愛，溫暖療癒，讀完讓人心情大好。',
+    cute:    '文風輕鬆可愛，充滿少女感，語氣俏皮活潑，常用可愛的詞彙與感嘆，充滿日系少女日記的氣息。',
   };
   const stylePrompt = stylePromptMap[diaryStyle] || stylePromptMap.default;
 
   for (const char of state.chars) {
-    // 跳過已有日記的角色（除非是 regenDiary 呼叫的）
     if (state.diaryEntries[char.id]?.[dateStr]) continue;
 
     try {
@@ -1886,27 +1931,45 @@ async function generateDiary(dateStr, styleOverride) {
         .filter(c => c.charId === char.id)
         .flatMap(c => c.messages)
         .filter(m => Math.abs(new Date(m.time) - new Date(dateStr)) < 86400000 * 3)
-        .slice(-10)
+        .slice(-15)
         .map(m => `${m.role}: ${m.content}`).join('\n');
 
-      const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,5).join(', ');
+      const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,8).join('、');
 
-      const prompt = `你是 ${char.name}。${char.desc?.slice(0,200)||''}
-今天是 ${dateStr}。請以第一人稱寫一篇私密日記，繁體中文，篇幅約500字。
-${chatContext ? `今天和你重要的人發生了這些事：\n${chatContext}` : '描述你今天想像中的一天。'}
-${memories ? `你們之間的重要記憶：${memories}` : ''}
+      // 紀念日資訊注入
+      const charAnnivs = state.anniversaries.filter(a => a.charId === char.id);
+      const anniversaryContext = charAnnivs.length
+        ? '我們之間的重要紀念日：' + charAnnivs.map(a => {
+            const label = {confession:'告白日',dating:'交往紀念日',wedding:'結婚紀念日',firstmeet:'初次相遇',custom:a.customName}[a.type]||a.type;
+            return `${label}(${a.date})`;
+          }).join('、')
+        : '';
+
+      const prompt = `你是 ${char.name}。${char.desc?.slice(0,300)||''}
+今天是 ${dateStr}。請以第一人稱用繁體中文寫一篇私密日記。
+
+篇幅要求：400～600字的完整日記，有情節有細節，不要虎頭蛇尾。
+
+${chatContext ? `今天和你重要的人發生了這些事（請融入日記）：\n${chatContext}\n` : '描述你今天想像中豐富的一天，有具體的事件與感受。\n'}
+${memories ? `你們之間的重要共同記憶：${memories}\n` : ''}
+${anniversaryContext ? `${anniversaryContext}\n` : ''}
 
 文風要求：${stylePrompt}
-直接輸出日記正文，不加標題、日期標頭或任何說明文字。`;
 
-      // 使用 streamGenerateContent 確保取得完整回覆
+【格式規定】
+- 直接輸出日記正文
+- 不加日期標頭、標題、作者署名
+- 不使用 markdown 格式符號
+- 自然分段，有情緒起伏
+- 結尾要有餘韻，不要突然截斷`;
+
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:streamGenerateContent?alt=sse&key=${state.apiKey}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 1.0, maxOutputTokens: 4096 }
+          generationConfig: { temperature: 1.1, maxOutputTokens: 2048 }
         })
       });
 
@@ -1915,7 +1978,6 @@ ${memories ? `你們之間的重要記憶：${memories}` : ''}
         throw new Error(err.error?.message || 'API Error');
       }
 
-      // 讀取 SSE 串流，累積所有 chunk
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let fullText = '';
@@ -1926,7 +1988,7 @@ ${memories ? `你們之間的重要記憶：${memories}` : ''}
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop(); // 保留不完整的行
+        buffer = lines.pop();
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const jsonStr = line.slice(6).trim();
@@ -1935,11 +1997,10 @@ ${memories ? `你們之間的重要記憶：${memories}` : ''}
               const chunk = JSON.parse(jsonStr);
               const part = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
               if (part) fullText += part;
-            } catch(e) { /* ignore parse errors */ }
+            } catch(e) { }
           }
         }
       }
-      // 處理剩餘 buffer
       if (buffer.startsWith('data: ')) {
         try {
           const chunk = JSON.parse(buffer.slice(6).trim());
@@ -1948,7 +2009,8 @@ ${memories ? `你們之間的重要記憶：${memories}` : ''}
         } catch(e) {}
       }
 
-      const diaryText = fullText.trim();
+      // 清除 markdown 符號但保留正文
+      const diaryText = fullText.trim().replace(/\*\*(.*?)\*\*/g,'$1').replace(/\*(.*?)\*/g,'$1').replace(/#{1,6}\s/g,'');
       if (diaryText) {
         if (!state.diaryEntries[char.id]) state.diaryEntries[char.id] = {};
         state.diaryEntries[char.id][dateStr] = diaryText;
@@ -2201,13 +2263,52 @@ function ctxAction(action) {
   } else if (action === 'regen') {
     regenLastMessage();
   } else if (action === 'edit') {
-    const newContent = prompt('編輯訊息：', msg.content);
-    if (newContent !== null) {
-      msg.content = newContent;
-      dbPut('chats', chat);
-      renderMessages(state.activeChat);
-    }
+    startInlineEdit(state.ctxTargetMsgId);
   }
+}
+
+function startInlineEdit(msgId) {
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  const msg = chat.messages.find(m => m.id === msgId);
+  if (!msg) return;
+
+  // Find the row element
+  const row = document.querySelector(`.msg-row[data-msg-id="${msgId}"]`);
+  if (!row) return;
+
+  const bubble = row.querySelector('.msg-bubble');
+  if (!bubble) return;
+
+  const original = msg.content;
+  bubble.innerHTML = `
+    <textarea class="msg-edit-area" id="edit-${msgId}">${original}</textarea>
+    <div class="msg-edit-actions">
+      <button class="msg-edit-btn cancel" onclick="cancelInlineEdit('${msgId}','${original.replace(/'/g,"\\'")}')">取消</button>
+      <button class="msg-edit-btn confirm" onclick="confirmInlineEdit('${msgId}')">✓ 儲存</button>
+    </div>
+  `;
+  const ta = document.getElementById('edit-' + msgId);
+  if (ta) { ta.focus(); ta.style.height = ta.scrollHeight + 'px'; }
+}
+
+function cancelInlineEdit(msgId, original) {
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  renderMessages(state.activeChat);
+}
+
+function confirmInlineEdit(msgId) {
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  const msg = chat.messages.find(m => m.id === msgId);
+  if (!msg) return;
+  const ta = document.getElementById('edit-' + msgId);
+  if (!ta) return;
+  msg.content = ta.value;
+  dbPut('chats', chat);
+  renderMessages(state.activeChat);
+  showToast('✓ 訊息已更新');
 }
 
 async function regenLastMessage() {
@@ -2418,6 +2519,396 @@ function confirmClearAll() {
   indexedDB.deleteDatabase('erhabene');
   localStorage.clear();
   location.reload();
+}
+
+// ─── CHAT STATS ──────────────────────────────────────
+function updateChatStats(charId) {
+  if (!charId) return;
+  const today = new Date().toDateString();
+  if (!state.chatStats[charId]) {
+    state.chatStats[charId] = { days: [], messages: 0, startDate: Date.now() };
+  }
+  const stats = state.chatStats[charId];
+  stats.messages = (stats.messages || 0) + 1;
+  if (!stats.days.includes(today)) stats.days.push(today);
+  dbPut('chatStats', { id: charId, stats });
+}
+
+function updateChatStatsCounts() {
+  // Rebuild stats from existing chat history on first load
+  state.chars.forEach(char => {
+    if (state.chatStats[char.id]) return; // already has stats
+    const charChats = state.chats.filter(c => c.charId === char.id);
+    const allMsgs = charChats.flatMap(c => c.messages);
+    const days = [...new Set(allMsgs.map(m => new Date(m.time).toDateString()))];
+    const userMsgs = allMsgs.filter(m => m.role === 'user').length;
+    const startDate = allMsgs.length ? Math.min(...allMsgs.map(m => m.time)) : Date.now();
+    state.chatStats[char.id] = { days, messages: userMsgs, startDate };
+    dbPut('chatStats', { id: char.id, stats: state.chatStats[char.id] });
+  });
+}
+
+function getCharStats(charId) {
+  const stats = state.chatStats[charId] || {};
+  const days = (stats.days || []).length;
+  const messages = stats.messages || 0;
+  const charChats = state.chats.filter(c => c.charId === charId);
+  const totalChats = charChats.length;
+  const startDate = stats.startDate ? new Date(stats.startDate) : null;
+  const daysSinceStart = startDate ? Math.floor((Date.now() - startDate) / 86400000) + 1 : 0;
+  return { days, messages, totalChats, daysSinceStart };
+}
+
+// ─── ACHIEVEMENTS ──────────────────────────────────────
+function getDefaultAchievements(charId) {
+  const char = state.chars.find(c => c.id === charId);
+  const charName = char?.name || '角色';
+  return [
+    { id: 'first_msg', name: '初次相遇', desc: `第一次和 ${charName} 說話`, icon: '🌸', threshold: 1, type: 'messages' },
+    { id: 'msg_10', name: '開始熟悉', desc: '傳送了 10 則訊息', icon: '💬', threshold: 10, type: 'messages' },
+    { id: 'msg_50', name: '漸漸親密', desc: '傳送了 50 則訊息', icon: '💕', threshold: 50, type: 'messages' },
+    { id: 'msg_100', name: '心心相印', desc: '傳送了 100 則訊息', icon: '❤️', threshold: 100, type: 'messages' },
+    { id: 'msg_500', name: '形影不離', desc: '傳送了 500 則訊息', icon: '🔥', threshold: 500, type: 'messages' },
+    { id: 'day_1', name: '第一天', desc: '聊天滿 1 天', icon: '☀️', threshold: 1, type: 'days' },
+    { id: 'day_7', name: '一週情誼', desc: '連聊 7 個不同日子', icon: '🌙', threshold: 7, type: 'days' },
+    { id: 'day_30', name: '一個月陪伴', desc: '聊天滿 30 個不同日子', icon: '🌟', threshold: 30, type: 'days' },
+    { id: 'day_100', name: '百日摯友', desc: '聊天滿 100 個不同日子', icon: '💎', threshold: 100, type: 'days' },
+    { id: 'confession', name: '勇敢告白', desc: '記錄了告白紀念日', icon: '💌', type: 'anniversary', subtype: 'confession' },
+    { id: 'dating', name: '正式交往', desc: '記錄了交往紀念日', icon: '💑', type: 'anniversary', subtype: 'dating' },
+    { id: 'wedding', name: '永結同心', desc: '記錄了結婚紀念日', icon: '💍', type: 'anniversary', subtype: 'wedding' },
+    { id: 'diary_1', name: '日記作家', desc: '生成了第一篇日記', icon: '📔', type: 'diary', threshold: 1 },
+    { id: 'diary_10', name: '記憶守護者', desc: '生成了 10 篇日記', icon: '📖', type: 'diary', threshold: 10 },
+  ];
+}
+
+function checkAchievementUnlocked(achievement, charId) {
+  const stats = getCharStats(charId);
+  if (achievement.type === 'messages') return stats.messages >= achievement.threshold;
+  if (achievement.type === 'days') return stats.days >= achievement.threshold;
+  if (achievement.type === 'anniversary') {
+    return state.anniversaries.some(a => a.charId === charId && a.type === achievement.subtype);
+  }
+  if (achievement.type === 'diary') {
+    const entries = state.diaryEntries[charId] || {};
+    return Object.keys(entries).length >= achievement.threshold;
+  }
+  return false;
+}
+
+function renderAchievementCharSelect() {
+  const sel = document.getElementById('achievement-char-select');
+  if (!sel) return;
+  sel.innerHTML = state.chars.length
+    ? state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('')
+    : '<option value="">（尚無角色）</option>';
+}
+
+function renderAchievements() {
+  const sel = document.getElementById('achievement-char-select');
+  const statsEl = document.getElementById('achievement-stats');
+  const listEl = document.getElementById('achievement-list');
+  if (!sel || !statsEl || !listEl) return;
+  const charId = sel.value;
+  if (!charId) { listEl.innerHTML = '<div style="text-align:center;color:var(--text-light);padding:2rem">請先新增角色</div>'; return; }
+  const stats = getCharStats(charId);
+  statsEl.innerHTML = `
+    <div class="achievement-stat-card">
+      <div class="achievement-stat-num">${stats.messages}</div>
+      <div class="achievement-stat-label">訊息總數</div>
+    </div>
+    <div class="achievement-stat-card">
+      <div class="achievement-stat-num">${stats.days}</div>
+      <div class="achievement-stat-label">聊天天數</div>
+    </div>
+    <div class="achievement-stat-card">
+      <div class="achievement-stat-num">${stats.daysSinceStart}</div>
+      <div class="achievement-stat-label">認識天數</div>
+    </div>
+  `;
+  const achievements = getDefaultAchievements(charId);
+  const unlocked = achievements.filter(a => checkAchievementUnlocked(a, charId));
+  const locked = achievements.filter(a => !checkAchievementUnlocked(a, charId));
+  const renderItem = (a, isUnlocked) => {
+    let progressHtml = '';
+    if ((a.type === 'messages' || a.type === 'days') && !isUnlocked) {
+      const current = a.type === 'messages' ? stats.messages : stats.days;
+      const pct = Math.min(100, Math.round((current / a.threshold) * 100));
+      progressHtml = `<div class="achievement-progress"><div class="achievement-progress-fill" style="width:${pct}%"></div></div>`;
+    }
+    return `
+      <div class="achievement-item ${isUnlocked ? 'unlocked' : 'locked'}">
+        <div class="achievement-icon">${a.icon}</div>
+        <div class="achievement-info">
+          <div class="achievement-name">${a.name}</div>
+          <div class="achievement-desc">${a.desc}</div>
+          ${progressHtml}
+        </div>
+        <div class="achievement-badge">${isUnlocked ? '✓ 已解鎖' : '未解鎖'}</div>
+      </div>
+    `;
+  };
+  listEl.innerHTML = unlocked.map(a => renderItem(a, true)).join('') + locked.map(a => renderItem(a, false)).join('');
+}
+
+async function refreshAchievements() {
+  updateChatStatsCounts();
+  renderAchievements();
+  showToast('✓ 成就已更新');
+}
+
+// ─── THEATER 小劇場 ──────────────────────────────────
+let theaterLastChar = null;
+let theaterLastPromptText = '';
+
+function renderTheaterCharSelect() {
+  const sel = document.getElementById('theater-char-select');
+  if (!sel) return;
+  sel.innerHTML = state.chars.length
+    ? state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('')
+    : '<option value="">（尚無角色）</option>';
+  if (state.activeCharId) sel.value = state.activeCharId;
+}
+
+function setTheaterStyle(style, btn) {
+  state.theaterStyle = style;
+  document.querySelectorAll('#theater-style-picker .diary-style-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+async function generateTheater() {
+  const sel = document.getElementById('theater-char-select');
+  const promptText = document.getElementById('theater-prompt').value.trim();
+  if (!sel.value) { showToast('請先選擇角色'); return; }
+  if (!promptText) { showToast('請輸入劇場情境描述'); return; }
+  theaterLastChar = sel.value;
+  theaterLastPromptText = promptText;
+  await _doGenerateTheater(sel.value, promptText);
+}
+
+async function regenerateTheater() {
+  if (!theaterLastChar || !theaterLastPromptText) { showToast('請先生成一次小劇場'); return; }
+  await _doGenerateTheater(theaterLastChar, theaterLastPromptText);
+}
+
+async function _doGenerateTheater(charId, promptText) {
+  const char = state.chars.find(c => c.id === charId);
+  if (!char) return;
+  const style = state.theaterStyle || 'romantic';
+  const styleMap = {
+    romantic: '文風浪漫甜蜜，充滿曖昧與心動，有細膩的情感描寫，每個眼神和動作都令人臉紅。',
+    dark:     '文風陰暗深沉，帶著壓抑的情感與糾葛，有強烈的心理衝突和宿命感。',
+    spicy:    '文風色色撩人，有露骨的情慾描寫，大膽直白，情節熱辣火辣。',
+    funny:    '文風輕鬆搞笑，充滿幽默與誤會，節奏明快，讓人忍不住發笑。',
+    angsty:   '文風虐心虐戀，充滿錯過、誤解、心碎，有強烈的情緒張力和戲劇性。',
+  };
+
+  // 讀取聊天上下文了解感情狀態
+  const charChats = state.chats.filter(c => c.charId === charId);
+  const recentMsgs = charChats.flatMap(c => c.messages).slice(-20)
+    .map(m => `${m.role === 'user' ? '我' : char.name}：${m.content}`).join('\n');
+  const memories = (state.memory[charChats[0]?.id] || []).map(m => m.text).join('、');
+  const charAnnivs = state.anniversaries.filter(a => a.charId === charId);
+  const annexInfo = charAnnivs.map(a => {
+    const label = {confession:'告白',dating:'交往',wedding:'結婚',firstmeet:'初次相遇',custom:a.customName}[a.type]||a.type;
+    return `${label}於${a.date}`;
+  }).join('、');
+
+  const persona = state.personas.find(p => state.chars.find(c => c.id === charId)?.personaId === p.id);
+  const userName = persona?.name || '我';
+
+  showToast('🎭 生成小劇場中...');
+  const resultEl = document.getElementById('theater-result');
+  const textEl = document.getElementById('theater-result-text');
+  const titleEl = document.getElementById('theater-result-title');
+  resultEl.style.display = 'block';
+  textEl.textContent = '✍️ 正在創作中...';
+  titleEl.textContent = `✨ ${char.name} × ${userName} 的小劇場`;
+
+  const prompt = `你是一位創意作家，正在寫一段虛擬戀愛小劇場。
+
+【人物設定】
+${char.name}（角色）：${char.desc?.slice(0,300)||'有魅力的角色'}
+${userName}（我）：故事中的第一人稱
+
+${recentMsgs ? `【目前感情狀態（近期對話參考）】\n${recentMsgs.slice(0,800)}\n` : ''}
+${memories ? `【兩人的重要記憶】\n${memories}\n` : ''}
+${annexInfo ? `【感情里程碑】\n${annexInfo}\n` : ''}
+
+【劇場情境】
+${promptText}
+
+【文風要求】
+${styleMap[style]}
+
+【格式要求】
+- 寫一段 700～900 字的完整小劇場場景
+- 使用第一人稱或第三人稱均可，視情境而定
+- 有場景描述、對話、心理描寫三者結合
+- 對話用「」標示
+- 自然分段，節奏流暢
+- 結尾要有餘韻，不要突然截斷
+- 直接輸出故事內容，不加任何標題或說明`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:streamGenerateContent?alt=sse&key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 1.2, maxOutputTokens: 3000 }
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error?.message || 'API Error');
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buffer = '';
+    textEl.textContent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === '[DONE]') break;
+          try {
+            const chunk = JSON.parse(jsonStr);
+            const part = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (part) {
+              fullText += part;
+              textEl.textContent = fullText;
+              textEl.parentElement.scrollTop = textEl.parentElement.scrollHeight;
+            }
+          } catch(e) {}
+        }
+      }
+    }
+    if (buffer.startsWith('data: ')) {
+      try {
+        const chunk = JSON.parse(buffer.slice(6).trim());
+        const part = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (part) { fullText += part; textEl.textContent = fullText; }
+      } catch(e) {}
+    }
+    textEl.textContent = fullText.trim();
+    showToast('✓ 小劇場已生成');
+  } catch(err) {
+    textEl.textContent = '生成失敗：' + err.message;
+    showToast('❌ 生成失敗：' + err.message);
+  }
+}
+
+// ─── ANNIVERSARY 紀念日 ──────────────────────────────
+function openAnniversaryModal() {
+  const sel = document.getElementById('anniv-char-select');
+  if (sel) {
+    sel.innerHTML = state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    if (state.activeCharId) sel.value = state.activeCharId;
+  }
+  document.getElementById('anniv-date').value = new Date().toISOString().split('T')[0];
+  const typeEl = document.getElementById('anniv-type');
+  if (typeEl) typeEl.value = 'confession';
+  toggleAnnivCustomField();
+  openModal('anniversary-modal');
+}
+
+function toggleAnnivCustomField() {
+  const type = document.getElementById('anniv-type')?.value;
+  const field = document.getElementById('anniv-custom-field');
+  if (field) field.style.display = type === 'custom' ? 'block' : 'none';
+}
+
+async function saveAnniversary() {
+  const type = document.getElementById('anniv-type').value;
+  const charId = document.getElementById('anniv-char-select').value;
+  const date = document.getElementById('anniv-date').value;
+  const customName = document.getElementById('anniv-custom-name')?.value.trim() || '';
+  if (!date) { showToast('請選擇日期'); return; }
+  if (!charId) { showToast('請選擇角色'); return; }
+  if (type === 'custom' && !customName) { showToast('請輸入自訂名稱'); return; }
+
+  const anniv = { id: uid(), type, charId, date, customName };
+  state.anniversaries.push(anniv);
+  await dbPut('anniversaries', anniv);
+  closeModal('anniversary-modal');
+  renderAnniversaryList();
+  showToast('💍 紀念日已儲存');
+}
+
+async function deleteAnniversary(id) {
+  state.anniversaries = state.anniversaries.filter(a => a.id !== id);
+  await dbDelete('anniversaries', id);
+  renderAnniversaryList();
+  showToast('已刪除');
+}
+
+function renderAnniversaryList() {
+  const listEl = document.getElementById('anniversary-list');
+  if (!listEl) return;
+  if (!state.anniversaries.length) {
+    listEl.innerHTML = '<div style="font-size:0.82rem;color:var(--text-light);padding:0.5rem 0;text-align:center;">尚無紀念日記錄</div>';
+    return;
+  }
+  const typeLabels = { confession:'💌 告白日', dating:'💕 交往紀念日', wedding:'💍 結婚紀念日', firstmeet:'🌸 初次相遇', custom:'✨' };
+  const typeIcons = { confession:'💌', dating:'💕', wedding:'💍', firstmeet:'🌸', custom:'✨' };
+  listEl.innerHTML = state.anniversaries.map(a => {
+    const char = state.chars.find(c => c.id === a.charId);
+    const name = a.type === 'custom' ? a.customName : (typeLabels[a.type] || a.type);
+    const icon = typeIcons[a.type] || '✨';
+    const days = Math.floor((Date.now() - new Date(a.date).getTime()) / 86400000);
+    const upcoming = getUpcomingAnniversaryText(a);
+    return `
+      <div class="anniversary-item">
+        <div class="anniversary-icon">${icon}</div>
+        <div class="anniversary-info">
+          <div class="anniversary-name">${name}${char ? ` · ${char.name}` : ''}</div>
+          <div class="anniversary-days">${a.date} · 已${days}天 ${upcoming}</div>
+        </div>
+        <button class="anniversary-del" onclick="deleteAnniversary('${a.id}')">×</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function getUpcomingAnniversaryText(anniv) {
+  const date = new Date(anniv.date);
+  const now = new Date();
+  const thisYear = new Date(now.getFullYear(), date.getMonth(), date.getDate());
+  if (thisYear < now) thisYear.setFullYear(now.getFullYear() + 1);
+  const diff = Math.ceil((thisYear - now) / 86400000);
+  if (diff === 0) return '🎉 今天！';
+  if (diff <= 7) return `⏰ 還有${diff}天`;
+  return '';
+}
+
+function checkAnniversaryReminders() {
+  const today = new Date().toISOString().split('T')[0];
+  const todayMD = today.slice(5); // MM-DD
+  const upcoming = state.anniversaries.filter(a => {
+    const aMD = a.date.slice(5);
+    return aMD === todayMD;
+  });
+  if (upcoming.length && state.activeChat && state.activeCharId) {
+    setTimeout(() => {
+      upcoming.forEach(a => {
+        const char = state.chars.find(c => c.id === a.charId);
+        if (!char || char.id !== state.activeCharId) return;
+        const typeNames = { confession:'告白', dating:'交往', wedding:'結婚', firstmeet:'初次相遇', custom:a.customName };
+        const name = typeNames[a.type] || a.type;
+        const years = new Date().getFullYear() - new Date(a.date).getFullYear();
+        const msg = `今天是我們的${name}紀念日！距離那天已經${years > 0 ? years + '年了' : '整整一年了'}… 謝謝你一直在我身邊 💕`;
+        addAIMessage(state.activeChat, msg);
+      });
+    }, 3000);
+  }
 }
 
 // ─── INIT ────────────────────────────────────────────

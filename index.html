@@ -1752,7 +1752,10 @@ body {
         <div id="theater-result" style="display:none;background:rgba(255,255,255,0.95);border-radius:20px;padding:1.5rem;box-shadow:0 2px 12px var(--shadow);border:1px solid rgba(201,184,232,0.15);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
             <div style="font-size:0.78rem;color:var(--lavender);font-weight:500;" id="theater-result-title">✨ 小劇場</div>
-            <button onclick="regenerateTheater()" class="diary-regen-btn">🔄 重新生成</button>
+            <div style="display:flex;gap:0.5rem;align-items:center;">
+              <button onclick="saveCurrentTheater()" class="diary-regen-btn" style="background:linear-gradient(135deg,var(--lavender),var(--milk-blue));color:white;border:none;">💾 儲存</button>
+              <button onclick="regenerateTheater()" class="diary-regen-btn">🔄 重新生成</button>
+            </div>
           </div>
           <div id="theater-result-text" style="font-size:0.9rem;color:var(--text-dark);line-height:1.9;white-space:pre-wrap;"></div>
         </div>

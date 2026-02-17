@@ -59,7 +59,7 @@ Stay in character. Be warm, casual, and emotionally real.`,
 // ─── INDEXEDDB ─────────────────────────────────────
 function initDB() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open('erhabene', 5);
+    const req = indexedDB.open('erhabene', 4);
     req.onupgradeneeded = e => {
       const db = e.target.result;
       const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries'];
@@ -2501,7 +2501,7 @@ async function allCharsReplyToPost(postId) {
       const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
 有人在社群平台發文：「${p2.content.slice(0,300)}」
 ${persona ? `你在和 ${persona.name} 說話。` : ''}請用繁體中文寫一則自然留言（1-2句），語氣符合個性。只輸出留言內容。`;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
       });
@@ -2536,7 +2536,7 @@ async function aiReplyToComment(postId, userComment) {
 貼文：「${p2.content.slice(0,300)}」
 ${persona ? `你在和 ${persona.name} 說話。` : ''}有人留言：「${userComment}」
 請用繁體中文回應（1-2句），語氣符合個性。只輸出回覆內容。`;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
       });
@@ -3838,6 +3838,23 @@ async function generateTheater() {
 async function regenerateTheater() {
   if (!theaterLastChar || !theaterLastPromptText) { showToast('請先生成一次小劇場'); return; }
   await _doGenerateTheater(theaterLastChar, theaterLastPromptText);
+}
+
+async function saveCurrentTheater() {
+  const textEl = document.getElementById('theater-result-text');
+  const fullText = textEl?.textContent?.trim();
+  if (!fullText || fullText === '✍️ 正在創作中...') { showToast('沒有可儲存的內容'); return; }
+  if (!theaterLastChar) { showToast('請先生成一次小劇場'); return; }
+  const charId = theaterLastChar;
+  const entry = { id: uid(), prompt: theaterLastPromptText, style: state.theaterStyle || 'romantic', text: fullText, time: Date.now() };
+  if (!state.theaterEntries[charId]) state.theaterEntries[charId] = [];
+  // 避免重複儲存相同內容
+  const alreadySaved = state.theaterEntries[charId].some(e => e.text === fullText);
+  if (alreadySaved) { showToast('此篇小劇場已儲存過了'); return; }
+  state.theaterEntries[charId].unshift(entry);
+  await dbPut('theaterEntries', { id: charId, entries: state.theaterEntries[charId] });
+  renderTheaterHistory(charId);
+  showToast('💾 小劇場已儲存！');
 }
 
 async function _doGenerateTheater(charId, promptText) {

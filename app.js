@@ -7,7 +7,7 @@
 let DB = null;
 let state = {
   apiKey: '',
-  model: 'gemini-2.0-flash',
+  model: 'gemini-3-flash-preview',
   temperature: 1.0,
   maxTokens: 2048,
   chars: [],        // [{id, name, avatar, desc, firstMsg, personaId}]
@@ -23,6 +23,7 @@ Stay in character at all times. Be warm, personal, and emotionally real.`,
   regexRules: '',
   socialPosts: [],  // [{id, charId, platform, content, imageUrl, comments:[], time}]
   diaryEntries: {}, // {charId: {date: content}}
+  diaryStyle: 'default', // default | dark | spicy | sunny | cute
   memory: {},       // {chatId: [{category, text}]}
   activeChat: null, // chatId
   activeCharId: null,
@@ -144,7 +145,7 @@ function enterApp() {
   // 優先讀取自訂輸入，否則讀下拉
   const customModel = document.getElementById('model-custom-input-setup')?.value?.trim();
   const selectModel = document.getElementById('model-select')?.value;
-  const model = customModel || selectModel || 'gemini-3.0-flash';
+  const model = customModel || selectModel || 'gemini-3-flash-preview';
   if (!key) { showToast('請輸入 API Key'); return; }
   state.apiKey = key;
   state.model = model;
@@ -168,10 +169,10 @@ function enterApp() {
 
 function modelShortName(m) {
   if (!m) return '未設定';
-  if (m.includes('3.0-ultra')) return 'Gemini 3.0 Ultra';
-  if (m.includes('3.0-pro')) return 'Gemini 3.0 Pro';
-  if (m.includes('3.0-flash')) return 'Gemini 3.0 Flash';
-  if (m.includes('3.0')) return 'Gemini 3.0';
+  if (m.includes('gemini-3') && m.includes('ultra')) return 'Gemini 3 Ultra';
+  if (m.includes('gemini-3') && m.includes('pro')) return 'Gemini 3 Pro';
+  if (m.includes('gemini-3') && m.includes('flash')) return 'Gemini 3 Flash';
+  if (m.includes('gemini-3')) return 'Gemini 3';
   if (m.includes('2.5-pro')) return 'Gemini 2.5 Pro';
   if (m.includes('2.5-flash')) return 'Gemini 2.5 Flash';
   if (m.includes('2.0-flash-exp')) return 'Gemini 2.0 Flash Exp';
@@ -197,7 +198,7 @@ function switchPage(page) {
   const sidebarTitle = document.getElementById('sidebar-title');
   const sidebarAddBtn = document.getElementById('sidebar-add-btn');
 
-  // 切換任何頁面都先收合底部 spell-panel
+  // 切換任何頁面都先收合底部 spell-panel（相容舊版）
   document.getElementById('spell-panel')?.classList.remove('open');
 
   // 咒語舞台：完全佔滿畫面，隱藏 sidebar
@@ -820,10 +821,16 @@ let lorebookEditId = null;
 
 function renderLorebookList() {
   const list = document.getElementById('lorebook-list');
+  const countEl = document.getElementById('lb-count');
+  const total = state.lorebook.length;
+  const enabled = state.lorebook.filter(e => e.enabled).length;
+  if (countEl) countEl.textContent = `${enabled} / ${total} 條目啟用`;
+
   if (!state.lorebook.length) {
-    list.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:1.5rem 1rem;">尚無條目 — 點擊下方「＋ 新增條目」</div>';
+    list.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:2rem 1rem;border:1.5px dashed rgba(201,184,232,0.3);border-radius:12px;">尚無條目 — 點擊「＋ 新增條目」建立第一個世界資訊</div>';
     return;
   }
+
   list.innerHTML = state.lorebook.map(e => {
     const keys = e.keys || e.keywords || [];
     const keyStr = keys.join(', ') || '（無關鍵字）';
@@ -833,74 +840,90 @@ function renderLorebookList() {
     const safeKeys = keys.join(', ').replace(/"/g,'&quot;');
     const safeSecKeys = (e.secondary_keys || []).join(', ').replace(/"/g,'&quot;');
     const safeComment = (e.comment || '').replace(/"/g,'&quot;');
+
+    // Position friendly label
+    const posLabels = { before_char:'角色描述前', after_char:'角色描述後', before_prompt:'Prompt前', at_depth:'@Depth(AN)' };
+    const posLabel = posLabels[e.position||'before_char'] || e.position;
+
     return `<div class="lb-entry${isOpen?' lb-open':''}" id="lb-entry-${e.id}">
       <div class="lb-header" onclick="toggleLorebookEntry('${e.id}')">
         <div class="lb-entry-left">
-          <input type="checkbox" class="lb-enable-cb" ${e.enabled?'checked':''}
-            onclick="event.stopPropagation();lbToggleEnabled('${e.id}',this.checked)" title="啟用">
-          ${e.constant?'<span class="lb-badge lb-const" title="Always On">∞</span>':''}
-          ${e.selective?'<span class="lb-badge lb-sel" title="Selective">◈</span>':''}
-          <span class="lb-name">${safeName||'（未命名）'}</span>
+          <button class="lb-toggle${e.enabled?' on':''}" onclick="event.stopPropagation();lbToggleEnabled('${e.id}',!this.classList.contains('on'))" title="${e.enabled?'已啟用，點擊停用':'已停用，點擊啟用'}"></button>
+          ${e.constant?'<span class="lb-badge lb-const" title="Constant：永遠注入">CONST</span>':''}
+          ${e.selective?'<span class="lb-badge lb-sel" title="Selective：需同時匹配 Secondary Keys">SEL</span>':''}
+          <span class="lb-name">${safeName||'（未命名條目）'}</span>
         </div>
         <div class="lb-entry-right">
-          <span class="lb-keys-preview">${keyStr.slice(0,28)}${keyStr.length>28?'…':''}</span>
+          <span class="lb-keys-preview" title="${keyStr}">${keyStr.slice(0,22)}${keyStr.length>22?'…':''}</span>
           <span class="lb-order" title="Insertion Order">#${e.insertion_order||100}</span>
-          <button onclick="event.stopPropagation();deleteLorebook('${e.id}')" class="lb-del-btn">×</button>
+          <button onclick="event.stopPropagation();deleteLorebook('${e.id}')" class="lb-del-btn" title="刪除">×</button>
         </div>
       </div>
       ${isOpen ? `<div class="lb-body">
         <div class="lb-row-2col">
           <div class="lb-field" style="flex:2">
-            <label class="lb-label">名稱（Entry Name）</label>
-            <input class="lb-input" id="lb-name-${e.id}" value="${safeName}" placeholder="e.g. World Building">
+            <label class="lb-label">Entry Name（條目名稱）</label>
+            <input class="lb-input" id="lb-name-${e.id}" value="${safeName}" placeholder="e.g. World Rule / Character Lore">
           </div>
           <div class="lb-field" style="flex:0 0 80px">
             <label class="lb-label">Order</label>
             <input class="lb-input" type="number" id="lb-order-${e.id}" value="${e.insertion_order||100}" min="0" max="999">
           </div>
         </div>
+
         <div class="lb-field">
-          <label class="lb-label">Primary Keys（逗號分隔，匹配任一即觸發）</label>
-          <input class="lb-input" id="lb-keys-${e.id}" value="${safeKeys}" placeholder="keyword1, keyword2, ...">
+          <label class="lb-label">🔑 Primary Keys（逗號分隔，任一關鍵字觸發）</label>
+          <input class="lb-input" id="lb-keys-${e.id}" value="${safeKeys}" placeholder="keyword1, keyword2, 角色名, ...">
         </div>
         <div class="lb-field">
-          <label class="lb-label">Secondary Keys（Selective 模式需同時匹配）</label>
+          <label class="lb-label">🔗 Secondary Keys（Selective 模式需同時匹配）</label>
           <input class="lb-input" id="lb-sec-${e.id}" value="${safeSecKeys}" placeholder="secondary1, secondary2">
         </div>
+
         <div class="lb-field">
-          <label class="lb-label">Content（注入 context 的內容）</label>
-          <textarea class="lb-textarea" id="lb-content-${e.id}">${safeContent}</textarea>
+          <label class="lb-label">📄 Content（注入 context 的世界資訊內容）</label>
+          <textarea class="lb-textarea" id="lb-content-${e.id}" placeholder="在這裡輸入要注入的世界觀、設定、規則...">${safeContent}</textarea>
         </div>
+
         <div class="lb-field">
-          <label class="lb-label">Comment（備註，不會注入）</label>
-          <input class="lb-input" id="lb-comment-${e.id}" value="${safeComment}" placeholder="自用備註">
+          <label class="lb-label">💬 Comment（個人備註，不注入）</label>
+          <input class="lb-input" id="lb-comment-${e.id}" value="${safeComment}" placeholder="自用備註，不影響 AI">
         </div>
-        <div class="lb-row-flags">
+
+        <div class="lb-row-2col" style="gap:0.6rem;">
           <div class="lb-field">
-            <label class="lb-label">Position</label>
+            <label class="lb-label">📍 Position（注入位置）</label>
             <select class="lb-select" id="lb-pos-${e.id}">
-              <option value="before_char" ${(e.position||'before_char')==='before_char'?'selected':''}>↑ Before Char Desc</option>
-              <option value="after_char" ${e.position==='after_char'?'selected':''}>↓ After Char Desc</option>
-              <option value="before_prompt" ${e.position==='before_prompt'?'selected':''}>↑ Before Prompt</option>
-              <option value="at_depth" ${e.position==='at_depth'?'selected':''}>@ Depth (AN)</option>
+              <option value="before_char" ${(e.position||'before_char')==='before_char'?'selected':''}>↑ 角色描述之前</option>
+              <option value="after_char" ${e.position==='after_char'?'selected':''}>↓ 角色描述之後</option>
+              <option value="before_prompt" ${e.position==='before_prompt'?'selected':''}>↑ System Prompt 之前</option>
+              <option value="at_depth" ${e.position==='at_depth'?'selected':''}>@ Depth (Author's Note)</option>
             </select>
           </div>
-          <div class="lb-field" style="flex:0 0 70px">
-            <label class="lb-label">Scan Depth</label>
+          <div class="lb-field" style="flex:0 0 90px">
+            <label class="lb-label">🔍 Scan Depth</label>
             <input class="lb-input" type="number" id="lb-depth-${e.id}" value="${e.scan_depth||4}" min="1" max="200">
           </div>
-          <div class="lb-field" style="flex:0 0 80px">
-            <label class="lb-label">Token Budget</label>
+          <div class="lb-field" style="flex:0 0 90px">
+            <label class="lb-label">💎 Token Budget</label>
             <input class="lb-input" type="number" id="lb-budget-${e.id}" value="${e.token_budget||400}" min="0" max="8192">
           </div>
         </div>
-        <div class="lb-row-flags" style="margin-top:0.5rem;gap:1rem;">
-          <label class="lb-checkbox-label"><input type="checkbox" id="lb-const-${e.id}" ${e.constant?'checked':''}><span>Constant（永遠注入）</span></label>
-          <label class="lb-checkbox-label"><input type="checkbox" id="lb-sel-${e.id}" ${e.selective?'checked':''}><span>Selective</span></label>
-          <label class="lb-checkbox-label"><input type="checkbox" id="lb-case-${e.id}" ${e.case_sensitive?'checked':''}><span>Case Sensitive</span></label>
+
+        <div class="lb-flags-group">
+          <label class="lb-checkbox-label" title="永遠注入，不需關鍵字觸發">
+            <input type="checkbox" id="lb-const-${e.id}" ${e.constant?'checked':''}><span>∞ Constant（永遠注入）</span>
+          </label>
+          <label class="lb-checkbox-label" title="需同時匹配 Secondary Keys 才觸發">
+            <input type="checkbox" id="lb-sel-${e.id}" ${e.selective?'checked':''}><span>◈ Selective（精確匹配）</span>
+          </label>
+          <label class="lb-checkbox-label" title="關鍵字區分大小寫">
+            <input type="checkbox" id="lb-case-${e.id}" ${e.case_sensitive?'checked':''}><span>Aa Case Sensitive</span>
+          </label>
         </div>
-        <div style="display:flex;gap:0.5rem;margin-top:0.9rem;">
-          <button class="lb-save-btn" onclick="lbSaveEntry('${e.id}')">✓ 儲存</button>
+
+        <div style="display:flex;gap:0.5rem;margin-top:0.25rem;">
+          <button class="lb-save-btn" onclick="lbSaveEntry('${e.id}')">✓ 儲存條目</button>
           <button class="lb-cancel-btn" onclick="lbCancelEdit()">取消</button>
         </div>
       </div>` : ''}
@@ -920,7 +943,24 @@ function lbCancelEdit() { lorebookEditId = null; renderLorebookList(); }
 
 function lbToggleEnabled(id, enabled) {
   const e = state.lorebook.find(l => l.id === id);
-  if (e) { e.enabled = enabled; dbPut('lorebook', e); }
+  if (e) {
+    e.enabled = enabled;
+    dbPut('lorebook', e);
+    // Update toggle button visual immediately
+    const btn = document.querySelector(`#lb-entry-${id} .lb-toggle`);
+    if (btn) btn.classList.toggle('on', enabled);
+    // Update lb-count
+    renderLorebookCount();
+  }
+}
+
+function renderLorebookCount() {
+  const countEl = document.getElementById('lb-count');
+  if (countEl) {
+    const total = state.lorebook.length;
+    const enabled = state.lorebook.filter(e => e.enabled).length;
+    countEl.textContent = `${enabled} / ${total} 條目啟用`;
+  }
 }
 
 function lbSaveEntry(id) {
@@ -1423,85 +1463,9 @@ function downloadJSON(data, filename) {
   URL.revokeObjectURL(url);
 }
 
-// ─── SPELL (小劇場) ──────────────────────────────────
-function toggleSpellPanel() {
-  document.getElementById('spell-panel').classList.toggle('open');
-}
-
-async function castSpell() {
-  const charSelect = document.getElementById('spell-char-select');
-  const spellText = document.getElementById('spell-input').value.trim();
-  const charId = charSelect.value;
-
-  if (!charId || charId === '選擇角色...') { showToast('請選擇角色'); return; }
-  if (!spellText) { showToast('請輸入小劇場內容'); return; }
-
-  const char = state.chars.find(c => c.id === charId);
-  if (!char) return;
-
-  toggleSpellPanel();
-  showToast('✨ 進入小劇場模式...');
-
-  // Build spell context with current relationship info
-  const memories = state.memory[state.activeChat] || [];
-  const memText = memories.length ? memories.map(m => m.text).join(', ') : '（無記憶）';
-  const recentMsgs = state.activeChat
-    ? (state.chats.find(c => c.id === state.activeChat)?.messages || []).slice(-6)
-        .map(m => `${m.role}: ${m.content}`).join('\n') : '';
-
-  const spellSystem = `你正在進行一個小劇場（roleplay scenario）。
-角色：${char.name}
-${char.desc || ''}
-
-[目前感情狀態與記憶]
-${memText}
-
-[最近的聊天內容]
-${recentMsgs}
-
-[小劇場設定]
-${spellText}
-
-重要：這是獨立的小劇場空間，不影響主聊天記錄。盡情投入，字數可以更長，可以有更多描述。`;
-
-  // Create temporary spell conversation
-  const spellChatId = 'spell_' + uid();
-  const tempChat = { id: spellChatId, charId, messages: [] };
-  state.chats.push(tempChat);
-
-  // Open spell in main chat area with visual indicator
-  state.activeChat = spellChatId;
-  state.activeCharId = charId;
-  document.getElementById('chat-header').style.display = 'flex';
-  document.getElementById('input-area').style.display = 'flex';
-  document.getElementById('header-name').textContent = `✨ ${char.name} — 小劇場`;
-  document.getElementById('header-status').textContent = '小劇場模式（不計入記錄）';
-
-  const area = document.getElementById('messages-area');
-  area.innerHTML = `<div class="date-divider"><span>✨ 小劇場開始</span></div>`;
-
-  showTyping();
-  try {
-    const responses = await callGemini(spellChatId, '開始場景', spellSystem);
-    hideTyping();
-    for (let i = 0; i < responses.length; i++) {
-      await delay(300 + Math.random() * 400);
-      addAIMessage(spellChatId, responses[i]);
-      if (i < responses.length - 1) showTyping();
-    }
-  } catch(e) {
-    hideTyping();
-    addAIMessage(spellChatId, `（小劇場錯誤：${e.message}）`);
-  }
-
-  document.getElementById('spell-input').value = '';
-}
-
-function updateSpellCharSelect() {
-  const sel = document.getElementById('spell-char-select');
-  sel.innerHTML = '<option>選擇角色...</option>' +
-    state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-}
+// ─── SPELL (小劇場) ─────────────────────────────────
+// 小劇場面板已移除，功能統一至咒語舞台(cctv)分頁
+function updateSpellCharSelect() { /* no-op, spell panel removed */ }
 
 // ─── SOCIAL ─────────────────────────────────────────
 let currentSocialTab = 'plurk';
@@ -1881,17 +1845,38 @@ async function loadDiaryForDate(dateStr) {
   }
 
   content.innerHTML = `
-    <div style="text-align:center;padding:2rem;">
+    <div style="text-align:center;padding:2rem 1rem;">
       <div style="font-size:1.5rem;margin-bottom:0.8rem;">📔</div>
-      <div style="font-size:0.88rem;color:var(--text-mid);margin-bottom:1rem;">${dateStr} 的日記尚未生成</div>
-      <button onclick="generateDiary('${dateStr}')" style="padding:0.7rem 1.5rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:14px;color:white;font-family:inherit;font-size:0.88rem;cursor:pointer;">✨ 生成日記</button>
+      <div style="font-size:0.88rem;color:var(--text-mid);margin-bottom:1.2rem;">${dateStr} 的日記尚未生成</div>
+      <div style="margin-bottom:1.2rem;">
+        <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:0.5rem;letter-spacing:0.05em;">選擇文風</div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.4rem;justify-content:center;" id="diary-style-picker">
+          <button onclick="setDiaryStyle('default',this)" class="diary-style-btn active" data-style="default">📖 自然真摯</button>
+          <button onclick="setDiaryStyle('dark',this)" class="diary-style-btn" data-style="dark">🌑 陰暗憂鬱</button>
+          <button onclick="setDiaryStyle('spicy',this)" class="diary-style-btn" data-style="spicy">🔥 色色曖昧</button>
+          <button onclick="setDiaryStyle('sunny',this)" class="diary-style-btn" data-style="sunny">☀️ 陽光開朗</button>
+          <button onclick="setDiaryStyle('cute',this)" class="diary-style-btn" data-style="cute">🌸 輕鬆可愛</button>
+        </div>
+      </div>
+      <button onclick="generateDiary('${dateStr}')" style="padding:0.7rem 1.8rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:14px;color:white;font-family:inherit;font-size:0.88rem;cursor:pointer;font-weight:500;">✨ 生成日記</button>
     </div>
   `;
 }
 
-async function generateDiary(dateStr) {
+async function generateDiary(dateStr, styleOverride) {
   if (state.chars.length === 0) return;
+  // 取得文風（優先用傳入的，否則從 state 或預設）
+  const diaryStyle = styleOverride || state.diaryStyle || 'default';
   showToast('📔 生成日記中...');
+
+  const stylePromptMap = {
+    default:  '文風自然真摯，像真人在寫的私密日記，有細節，有感受。',
+    dark:     '文風陰暗、壓抑、帶著憂鬱與疏離感，如文學作品般沉重，充滿內心掙扎與黑暗的獨白。',
+    spicy:    '文風色色、曖昧撩人，有大膽的感官描寫與性暗示，熱辣露骨但保有文學性。',
+    sunny:    '文風陽光開朗、積極樂觀，充滿正能量與對生活的熱愛，溫暖療癒。',
+    cute:     '文風輕鬆可愛，充滿少女感，語氣俏皮活潑，常用可愛的詞彙與感嘆，像在和朋友說話一樣自在。',
+  };
+  const stylePrompt = stylePromptMap[diaryStyle] || stylePromptMap.default;
 
   for (const char of state.chars) {
     try {
@@ -1900,7 +1885,6 @@ async function generateDiary(dateStr) {
         .filter(c => c.charId === char.id)
         .flatMap(c => c.messages)
         .filter(m => {
-          const d = new Date(m.time).toLocaleDateString('zh-TW').replace(/\//g,'-');
           return Math.abs(new Date(m.time) - new Date(dateStr)) < 86400000 * 3;
         })
         .slice(-10)
@@ -1909,22 +1893,25 @@ async function generateDiary(dateStr) {
       const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,5).join(', ');
 
       const prompt = `你是 ${char.name}。${char.desc?.slice(0,200)||''}
-今天是 ${dateStr}。請以第一人稱寫一篇日記（繁體中文，200-350字）。
+今天是 ${dateStr}。請以第一人稱寫一篇完整的日記（繁體中文，400-600字，不可截斷，必須有開頭、中段與結尾）。
 ${chatContext ? `今天和你重要的人發生了這些事：\n${chatContext}` : '描述你想像中的一天'}
 ${memories ? `重要的記憶：${memories}` : ''}
-日記要有感情，像真人在寫，有細節，有感受。`;
+
+文風要求：${stylePrompt}
+重要：請直接輸出日記全文，不要加任何標題、前言或額外說明。日記必須完整，不能中途截斷。`;
 
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 600 } })
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 2048 } })
       });
       const data = await res.json();
       const diaryText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
       if (diaryText) {
         if (!state.diaryEntries[char.id]) state.diaryEntries[char.id] = {};
+        // 儲存文字（不套 regex，保留完整原文）
         state.diaryEntries[char.id][dateStr] = diaryText;
         await dbPut('diaryEntries', { id: char.id, entries: state.diaryEntries[char.id] });
       }
@@ -1934,6 +1921,12 @@ ${memories ? `重要的記憶：${memories}` : ''}
   renderDiaryCalendar();
   await loadDiaryForDate(dateStr);
   showToast('✓ 日記已生成');
+}
+
+function setDiaryStyle(style, btn) {
+  state.diaryStyle = style;
+  document.querySelectorAll('.diary-style-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
 }
 
 // ─── SPELL STAGE（獨立咒語舞台，原 CCTV 頁） ─────────────────

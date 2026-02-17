@@ -2163,7 +2163,7 @@ ${promptText ? `主題方向：${promptText}` : '根據你的個性與最近的�
 
 ${recentMsgs ? `[最近的對話記錄供參考，融入情緒與感受但不要直接引用]\n${recentMsgs}\n` : ''}
 
-字數150～400字，語氣自然真實，有個人色彩與情感細節，像真人在分享生活。
+字數至少400字，上限600字，語氣自然真實，有個人色彩與情感細節，像真人在分享生活，有起伏有細節不要虎頭蛇尾。
 ${currentSocialTab === 'plurk' ? '可以加幾個 hashtag，放在最後。' : '不要加 hashtag。'}
 只輸出貼文正文，不要加標題、作者名或任何說明。`;
 
@@ -2174,7 +2174,7 @@ ${currentSocialTab === 'plurk' ? '可以加幾個 hashtag，放在最後。' : '
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-        generationConfig: { temperature: 1.0, maxOutputTokens: 5000 }
+        generationConfig: { temperature: 1.0, maxOutputTokens: 4096 }
       })
     });
     const data = await res.json();
@@ -2255,15 +2255,17 @@ async function aiReplyToComment(postId, userComment) {
   if (!char) return;
 
   try {
-    const prompt = `你是 ${char.name}。你剛發了一篇貼文：「${post.content}」
-有人回覆說：「${userComment}」
-寫一個自然的回覆（1-2句話）。只輸出回覆內容。`;
+    const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+    const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
+你剛在社群平台發了一篇貼文：「${post.content.slice(0,300)}」
+${persona ? `你正在和 ${persona.name} 說話。` : ''}有人回覆說：「${userComment}」
+請用繁體中文寫一個自然的回覆（1-2句話），語氣符合你的個性。只輸出回覆內容，不要加任何說明或標點以外的符號。`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 150 } })
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200 } })
     });
     const data = await res.json();
     const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
@@ -2520,7 +2522,7 @@ ${anniversaryContext ? `${anniversaryContext}\n` : ''}
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 1.1, maxOutputTokens: 5000 }
+          generationConfig: { temperature: 1.1, maxOutputTokens: 2048 }
         })
       });
 

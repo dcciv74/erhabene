@@ -190,6 +190,10 @@ function enterApp() {
   if (customInputSettings) customInputSettings.value = model;
   renderSidebar();
   renderCharsGrid();
+  // 手機初始化：顯示內嵌聊天列表而非空白
+  if (window.innerWidth <= 768 && !state.activeChat) {
+    renderMobileChatList();
+  }
   initDiary();
   renderSocialFeed();
   checkRealWorldEvents();
@@ -233,21 +237,26 @@ function switchPage(page) {
   // 切換任何頁面都先收合底部 spell-panel（相容舊版）
   document.getElementById('spell-panel')?.classList.remove('open');
 
-  // 其他頁面恢復 sidebar
+  // 手機上：只有 chat 頁才展開 sidebar（聊天列表），其他頁收合
   sidebar.style.display = '';
   sidebar.classList.remove('mobile-open');
 
   if (page === 'chat') {
     sidebarTitle.textContent = '聊天';
-    sidebarAddBtn.textContent = '＋ 新增對話';
     sidebarAddBtn.onclick = showAddChatOrChar;
     renderSidebar();
+    // 手機上：不打開覆蓋式 sidebar，改為顯示內嵌聊天列表
+    const isMobile = window.innerWidth <= 768;
+    if (isMobile) {
+      // 如果已有 activeChat，直接顯示聊天；沒有的話顯示內嵌列表
+      if (state.activeChat) {
+        renderMessages(state.activeChat);
+      } else {
+        renderMobileChatList();
+      }
+    }
   } else if (page === 'chars') {
-    sidebar.classList.add('mobile-open');
-    renderSidebar('chars');
-    sidebarTitle.textContent = '角色';
-    sidebarAddBtn.textContent = '＋ 新增角色';
-    sidebarAddBtn.onclick = () => openModal('add-char-modal');
+    // 角色頁：sidebar 收合，角色格直接顯示在 chars-page 裡
     renderCharsGrid();
   } else if (page === 'social') {
     renderSocialFeed();
@@ -259,6 +268,98 @@ function switchPage(page) {
     renderAchievementCharSelect();
     renderAchievements();
   }
+}
+
+// ─── MOBILE CHAT LIST ───────────────────────────────
+// 手機版：在 chat-page 裡直接顯示聊天選擇列表（不用覆蓋式 sidebar）
+function renderMobileChatList() {
+  const container = document.getElementById('mobile-chat-list');
+  if (!container) return;
+
+  // 顯示列表容器，隱藏聊天內容
+  container.style.display = 'flex';
+  const messagesArea = document.getElementById('messages-area');
+  const inputArea    = document.getElementById('input-area');
+  const chatHeader   = document.getElementById('chat-header');
+  if (messagesArea) messagesArea.style.display = 'none';
+  if (inputArea)    inputArea.style.display    = 'none';
+  if (chatHeader)   chatHeader.style.display   = 'none';
+
+  if (state.chats.length === 0) {
+    container.innerHTML = `
+      <div style="padding:3rem 1.5rem;text-align:center;color:var(--text-light);">
+        <div style="font-size:2.5rem;margin-bottom:1rem;">🌸</div>
+        <div style="font-size:0.9rem;">還沒有對話</div>
+        <div style="font-size:0.78rem;margin-top:0.5rem;">前往「角色」頁面新增角色</div>
+      </div>`;
+    return;
+  }
+
+  // 按角色分組
+  const chatsByChar = {};
+  state.chats.forEach(chat => {
+    if (!chatsByChar[chat.charId]) chatsByChar[chat.charId] = [];
+    chatsByChar[chat.charId].push(chat);
+  });
+
+  let html = `<div style="padding:0.8rem 1rem 0.4rem;font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>`;
+
+  Object.entries(chatsByChar).forEach(([charId, chats]) => {
+    const char = state.chats.length && state.chars.find(c => c.id === charId);
+    if (!char) return;
+    const isImg = char.avatar?.startsWith('data:') || isImgSrc(char.avatar);
+    const avatarHtml = isImg
+      ? `<img src="${char.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+      : `<span style="font-size:1.3rem;">${char.avatar || '🌸'}</span>`;
+
+    chats.forEach(chat => {
+      const lastMsg = chat.messages[chat.messages.length - 1];
+      const preview = lastMsg?.content?.slice(0, 40) || '開始聊天...';
+      const isActive = chat.id === state.activeChat;
+      html += `
+        <div onclick="openChatFromMobile('${chat.id}')"
+          style="display:flex;align-items:center;gap:0.85rem;padding:0.8rem 1rem;
+            border-bottom:1px solid rgba(201,184,232,0.12);cursor:pointer;
+            background:${isActive ? 'rgba(201,184,232,0.18)' : 'transparent'};
+            transition:background 0.15s;">
+          <div style="width:44px;height:44px;border-radius:50%;flex-shrink:0;
+            background:linear-gradient(135deg,var(--lavender),var(--milk-blue));
+            display:flex;align-items:center;justify-content:center;overflow:hidden;">
+            ${avatarHtml}
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:0.88rem;color:var(--text-dark);">${char.name}</div>
+            <div style="font-size:0.75rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${preview}</div>
+          </div>
+        </div>`;
+    });
+  });
+
+  container.innerHTML = html;
+}
+
+function showMobileChatList() {
+  // ‹ 返回按鈕：回到內嵌聊天列表
+  const container = document.getElementById('mobile-chat-list');
+  const messagesArea = document.getElementById('messages-area');
+  const inputArea    = document.getElementById('input-area');
+  const chatHeader   = document.getElementById('chat-header');
+  if (container)    container.style.display = 'flex';
+  if (messagesArea) messagesArea.style.display = 'none';
+  if (inputArea)    inputArea.style.display    = 'none';
+  if (chatHeader)   chatHeader.style.display   = 'none';
+  renderMobileChatList();
+}
+
+function openChatFromMobile(chatId) {
+  // 隱藏內嵌列表，顯示聊天視窗
+  const container = document.getElementById('mobile-chat-list');
+  if (container) container.style.display = 'none';
+  const messagesArea = document.getElementById('messages-area');
+  const inputArea    = document.getElementById('input-area');
+  if (messagesArea) messagesArea.style.display = '';
+  if (inputArea)    inputArea.style.display    = 'flex';
+  openChat(chatId);
 }
 
 // ─── SIDEBAR ────────────────────────────────────────
@@ -419,6 +520,14 @@ function openChat(chatId) {
 
   // Close mobile sidebar
   document.getElementById('sidebar').classList.remove('mobile-open');
+
+  // 手機：確保內嵌列表隱藏，聊天內容可見
+  const mobileChatList = document.getElementById('mobile-chat-list');
+  if (mobileChatList) mobileChatList.style.display = 'none';
+  const messagesArea = document.getElementById('messages-area');
+  const inputArea    = document.getElementById('input-area');
+  if (messagesArea) messagesArea.style.display = '';
+  if (inputArea && state.activeChat) inputArea.style.display = 'flex';
 }
 
 // ─── MESSAGES ───────────────────────────────────────

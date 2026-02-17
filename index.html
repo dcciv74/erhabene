@@ -185,38 +185,26 @@ body {
 }
 
 .sidebar-header {
-  padding: 1.2rem 1.2rem 0.8rem;
+  padding: 0.75rem 1rem 0.6rem;
   border-bottom: 1px solid rgba(201,184,232,0.2);
+  display: flex; align-items: center; justify-content: space-between;
 }
 .sidebar-title {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: var(--text-dark);
-  margin-bottom: 0.7rem;
+  margin-bottom: 0;
 }
-.sidebar-search {
-  display: flex; align-items: center;
-  background: rgba(255,255,255,0.7);
-  border-radius: 12px;
-  padding: 0.5rem 0.8rem;
-  gap: 0.5rem;
-  border: 1px solid rgba(201,184,232,0.2);
-}
-.sidebar-search input {
-  border: none; background: none; outline: none;
-  font-family: inherit; font-size: 0.85rem;
-  color: var(--text-dark); flex: 1;
-}
-.sidebar-search span { color: var(--text-light); font-size: 0.9rem; }
+/* search removed */
 
-.sidebar-list { flex: 1; overflow-y: auto; padding: 0.5rem; }
+.sidebar-list { flex: 1; overflow-y: auto; padding: 0.3rem 0.4rem; }
 .sidebar-list::-webkit-scrollbar { width: 3px; }
 .sidebar-list::-webkit-scrollbar-thumb { background: var(--lavender-light); border-radius: 2px; }
 
 .chat-item {
   display: flex; align-items: center; gap: 0.8rem;
-  padding: 0.75rem 0.8rem;
-  border-radius: 16px;
+  padding: 0.55rem 0.7rem;
+  border-radius: 14px;
   cursor: pointer;
   transition: background 0.15s;
   position: relative;
@@ -1270,16 +1258,25 @@ body {
 @media (max-width: 768px) {
   #side-nav { display: none; }
   #sidebar {
-    position: fixed; inset: 0 0 60px 0;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    bottom: 60px; /* above bottom-nav */
     width: 100%; z-index: 150;
     transform: translateX(-100%);
     transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+    overflow-y: auto;
   }
   #sidebar.mobile-open { transform: translateX(0); }
   #bottom-nav { display: flex; }
   #main-area { padding-bottom: 60px; }
   #memory-panel { position: fixed; inset: 0; z-index: 300; width: 100%; }
   .page { padding-bottom: 0; }
+  /* 手機版聊天列表項目加大點擊區域 */
+  .chat-item { padding: 0.65rem 0.7rem; }
+  /* add-chat-btn 在 header 裡已是 ＋ 小按鈕，不需要底部大按鈕 */
+  .add-chat-btn { display: none; }
+  /* 手機版返回按鈕顯示 */
+  #mobile-back-btn { display: block !important; }
 }
 
 @media (min-width: 769px) {
@@ -1555,13 +1552,9 @@ body {
   <aside id="sidebar">
     <div class="sidebar-header">
       <div class="sidebar-title" id="sidebar-title">聊天</div>
-      <div class="sidebar-search">
-        <span>🔍</span>
-        <input placeholder="搜尋..." id="sidebar-search-input">
-      </div>
+      <button id="sidebar-add-btn" onclick="showAddChatOrChar()" style="border:none;background:none;font-size:1.35rem;cursor:pointer;color:var(--lavender);line-height:1;padding:0 0.1rem;" title="新增對話">＋</button>
     </div>
     <div class="sidebar-list" id="sidebar-list"></div>
-    <button class="add-chat-btn" id="sidebar-add-btn" onclick="showAddChatOrChar()">＋ 新增對話</button>
   </aside>
 
   <!-- Main Area -->
@@ -1570,6 +1563,11 @@ body {
     <!-- CHAT PAGE -->
     <div class="page active" id="chat-page">
       <div id="chat-header" style="display:none;">
+        <!-- 手機版返回按鈕（桌機隱藏） -->
+        <button id="mobile-back-btn" onclick="showMobileChatList()"
+          style="display:none;border:none;background:none;font-size:1.3rem;cursor:pointer;
+            color:var(--text-mid);padding:0 0.3rem 0 0;flex-shrink:0;"
+          title="返回列表">‹</button>
         <div class="header-avatar" id="header-avatar">🌸</div>
         <div class="header-info">
           <div class="header-name" id="header-name">選擇角色</div>
@@ -1582,6 +1580,9 @@ body {
         </div>
       </div>
       
+      <!-- 手機專用：內嵌聊天列表（不用覆蓋式 sidebar） -->
+      <div id="mobile-chat-list" style="display:none;flex-direction:column;flex:1;overflow-y:auto;background:var(--sidebar-bg);"></div>
+
       <div id="messages-area">
         <div class="empty-state" id="empty-chat">
           <div class="empty-state-icon">🌸</div>

@@ -2668,6 +2668,7 @@ async function generateDiary(dateStr, styleOverride) {
     if (state.diaryEntries[char.id]?.[dateStr]) continue;
 
     try {
+      // ── 只取該角色的聊天記錄 ──────────────────────────────
       const chatContext = state.chats
         .filter(c => c.charId === char.id)
         .flatMap(c => c.messages)
@@ -2675,7 +2676,21 @@ async function generateDiary(dateStr, styleOverride) {
         .slice(-15)
         .map(m => `${m.role}: ${m.content}`).join('\n');
 
-      const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,8).join('、');
+      // ── 只取該角色的聊天室的記憶（避免跨角色污染）──────────
+      const charChatIds = state.chats
+        .filter(c => c.charId === char.id)
+        .map(c => c.id);
+      const memories = charChatIds
+        .flatMap(cid => (state.memory[cid] || []))
+        .map(m => m?.text)
+        .filter(Boolean)
+        .slice(0, 8)
+        .join('、');
+
+      // ── 讀取該角色綁定的 persona ────────────────────────────
+      const persona = char.personaId
+        ? state.personas.find(p => p.id === char.personaId)
+        : null;
 
       // 紀念日資訊注入
       const charAnnivs = state.anniversaries.filter(a => a.charId === char.id);
@@ -2688,10 +2703,10 @@ async function generateDiary(dateStr, styleOverride) {
 
       const prompt = `你是 ${char.name}。${char.desc?.slice(0,300)||''}
 今天是 ${dateStr}。請以第一人稱用繁體中文寫一篇私密日記。
-
+${persona ? `你日記中提到的重要的人叫做「${persona.name}」。${persona.desc ? persona.desc.slice(0,150) : ''}\n` : ''}
 篇幅要求：400～600字的完整日記，有情節有細節，不要虎頭蛇尾。
 
-${chatContext ? `今天和你重要的人發生了這些事（請融入日記）：\n${chatContext}\n` : '描述你今天想像中豐富的一天，有具體的事件與感受。\n'}
+${chatContext ? `今天和你重要的人（${persona?.name || '對方'}）發生了這些事（請融入日記）：\n${chatContext}\n` : '描述你今天想像中豐富的一天，有具體的事件與感受。\n'}
 ${memories ? `你們之間的重要共同記憶：${memories}\n` : ''}
 ${anniversaryContext ? `${anniversaryContext}\n` : ''}
 

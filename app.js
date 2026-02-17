@@ -47,10 +47,13 @@ Stay in character. Be warm, casual, and emotionally real.`,
   autoMsgHours: 3,
   autoMsgTimer: null,
   editingCharId: null,
+  selectModeActive: false,
+  selectedMsgIds: new Set(),
   anniversaries: [], // [{id, type, charId, date, customName}]
   achievements: {},  // {charId: {generated: [{id,name,desc,icon,condition,unlocked}], stats}}
   theaterStyle: 'romantic',
   theaterLastPrompt: '',
+  theaterEntries: {}, // { charId: [{id, prompt, style, text, time}] }
   chatStats: {},    // {charId: {days: Set, messages: 0, startDate}}
 };
 
@@ -60,7 +63,7 @@ function initDB() {
     const req = indexedDB.open('erhabene', 4);
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats'];
+      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries'];
       ALL_STORES.forEach(store => {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store, { keyPath: 'id' });
@@ -130,6 +133,12 @@ async function loadAllData() {
   try {
     const dAll = await dbGetAll('diaryEntries');
     dAll.forEach(d => { state.diaryEntries[d.id] = d.entries; });
+  } catch(e) {}
+
+  // load theater entries
+  try {
+    const tAll = await dbGetAll('theaterEntries');
+    tAll.forEach(t => { state.theaterEntries[t.id] = t.entries; });
   } catch(e) {}
 
   // load achievements
@@ -472,6 +481,7 @@ async function createNewChat(charId) {
 }
 
 function openChat(chatId) {
+  if (state.selectModeActive) toggleSelectMode();
   state.activeChat = chatId;
   const chat = state.chats.find(c => c.id === chatId);
   if (!chat) return;
@@ -621,55 +631,6 @@ function renderMessages(chatId) {
       // Desktop: right-click context menu
       row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
 
-      // Mobile: long press (300ms) → show inline action buttons
-      // 記錄 touch 起始位置，移動超過 8px 就取消（防止滾動誤觸）
-      let _lpTimer = null;
-      let _lpStartX = 0, _lpStartY = 0;
-      let _lpFired = false;
-
-      row.addEventListener('touchstart', e => {
-        _lpFired = false;
-        _lpStartX = e.touches[0].clientX;
-        _lpStartY = e.touches[0].clientY;
-        _lpTimer = setTimeout(() => {
-          _lpFired = true;
-          // 震動回饋（Android）
-          if (navigator.vibrate) navigator.vibrate(40);
-          // 隱藏其他已開啟的 action panel
-          document.querySelectorAll('.msg-actions.mobile-show')
-            .forEach(el => el.classList.remove('mobile-show'));
-          const actions = row.querySelector('.msg-actions');
-          if (actions) {
-            actions.classList.add('mobile-show');
-            // 點其他地方收起
-            const dismiss = ev => {
-              if (!actions.contains(ev.target)) {
-                actions.classList.remove('mobile-show');
-                document.removeEventListener('touchstart', dismiss, true);
-              }
-            };
-            setTimeout(() => document.addEventListener('touchstart', dismiss, true), 80);
-          }
-        }, 300);
-      }, { passive: true });
-
-      row.addEventListener('touchmove', e => {
-        if (_lpTimer) {
-          const dx = e.touches[0].clientX - _lpStartX;
-          const dy = e.touches[0].clientY - _lpStartY;
-          // 移動超過 8px 視為滾動，取消長按
-          if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-            clearTimeout(_lpTimer);
-            _lpTimer = null;
-          }
-        }
-      }, { passive: true });
-
-      row.addEventListener('touchend', () => {
-        clearTimeout(_lpTimer);
-        _lpTimer = null;
-      });
-
       groupEl.appendChild(row);
     });
 
@@ -678,6 +639,19 @@ function renderMessages(chatId) {
 
   // Typing indicator placeholder
   area.innerHTML += `<div id="typing-indicator" style="display:none;"><div class="msg-group ai"><div class="msg-row"><div class="msg-avatar">${(() => { const c = state.chars.find(c=>c.id===state.activeCharId); const av = c?.avatar; return isImgSrc(av) ? `<img src="${av}">` : (av||'🌸'); })()}</div><div class="msg-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div></div></div></div>`;
+
+  // Event delegation：選取模式下攔截整個 area 的點擊
+  area._selectHandler && area.removeEventListener('click', area._selectHandler, true);
+  area._selectHandler = function(e) {
+    if (!state.selectModeActive) return;
+    const row = e.target.closest('.msg-row[data-msg-id]');
+    if (!row) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const msgId = row.dataset.msgId;
+    toggleMsgSelect(msgId, row);
+  };
+  area.addEventListener('click', area._selectHandler, true); // capture phase 先攔截
 
   scrollToBottom();
 }
@@ -753,7 +727,7 @@ async function sendMessage() {
   const hasImages = pendingChatImages.length > 0;
   if (!text && !hasImages) return;
   input.value = '';
-  input.style.height = 'auto';
+  input.style.height = 'auto'; // 重置高度
 
   // 鎖定這次送出所屬的 chatId — 後續 async 期間即使切換角色也不混淆
   const thisChatId   = state.activeChat;
@@ -953,8 +927,10 @@ async function callGeminiImage(prompt, refImages = []) {
   const parts = [];
   for (const img of refImages) {
     if (!img) continue;
+    // Support both {base64: dataUrl} from getAvatarRef and {base64, mimeType} raw formats
     const dataUrl = img.base64 || img.dataUrl || null;
     if (!dataUrl) continue;
+    // Extract mimeType and raw base64 from data URL
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/s);
     if (!match) {
       console.warn('[callGeminiImage] Could not parse image dataUrl:', dataUrl?.slice(0,60));
@@ -964,7 +940,7 @@ async function callGeminiImage(prompt, refImages = []) {
     const rawB64   = match[2];
     parts.push({ inlineData: { mimeType, data: rawB64 } });
   }
-  console.log('[callGeminiImage] sending', parts.length, 'ref parts (images) + 1 text part');
+  console.log('[callGeminiImage] sending', parts.length - 0, 'ref parts (images) + 1 text part');
   parts.push({ text: prompt });
 
   const body = {
@@ -972,63 +948,23 @@ async function callGeminiImage(prompt, refImages = []) {
     generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
   };
 
-  // 哪些 HTTP 狀態碼值得重試
-  const RETRYABLE = new Set([429, 500, 502, 503, 504]);
-  const MAX_RETRIES = 3;
-  const BASE_DELAY_MS = 2000; // 2s → 4s → 8s
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
 
-  let lastError;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      if (attempt > 1) {
-        const waitSec = (BASE_DELAY_MS * Math.pow(2, attempt - 2)) / 1000;
-        showToast(`⏳ 圖片生成逾時，第 ${attempt - 1} 次重試（等待 ${waitSec}s）...`);
-        await new Promise(r => setTimeout(r, BASE_DELAY_MS * Math.pow(2, attempt - 2)));
-      }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || 'Image gen failed: ' + res.status);
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        const errMsg = data?.error?.message || `Image gen failed: ${res.status}`;
-        // 只有可重試的狀態碼才繼續重試
-        if (RETRYABLE.has(res.status) && attempt < MAX_RETRIES) {
-          console.warn(`[callGeminiImage] attempt ${attempt} failed (${res.status}): ${errMsg}`);
-          lastError = new Error(errMsg);
-          continue;
-        }
-        throw new Error(errMsg);
-      }
-
-      const resParts = data.candidates?.[0]?.content?.parts || [];
-      for (const part of resParts) {
-        if (part.inlineData?.mimeType?.startsWith('image/')) {
-          if (attempt > 1) showToast(`✓ 重試成功（第 ${attempt} 次）`);
-          return 'data:' + part.inlineData.mimeType + ';base64,' + part.inlineData.data;
-        }
-      }
-      const textPart = resParts.find(p => p.text);
-      throw new Error(textPart?.text || '未收到圖片，請確認模型是否支援圖片生成');
-
-    } catch (err) {
-      // fetch 本身拋出的網路錯誤（非 HTTP 錯誤）也重試
-      const isNetworkError = !(err instanceof TypeError) === false || err.message.includes('fetch');
-      if (attempt < MAX_RETRIES) {
-        console.warn(`[callGeminiImage] attempt ${attempt} network error:`, err.message);
-        lastError = err;
-        continue;
-      }
-      throw err;
+  const resParts = data.candidates?.[0]?.content?.parts || [];
+  for (const part of resParts) {
+    if (part.inlineData?.mimeType?.startsWith('image/')) {
+      return 'data:' + part.inlineData.mimeType + ';base64,' + part.inlineData.data;
     }
   }
-
-  // 三次都失敗
-  throw lastError || new Error('圖片生成失敗，已重試 ' + MAX_RETRIES + ' 次');
+  const textPart = resParts.find(p => p.text);
+  throw new Error(textPart?.text || '未收到圖片，請確認模型是否支援圖片生成');
 }
 
 // 把 emoji/URL avatar 轉成可用的 base64 ref（只有 base64 格式才上傳）
@@ -2133,26 +2069,15 @@ function downloadJSON(data, filename) {
 function updateSpellCharSelect() { /* no-op, spell panel removed */ }
 
 // ─── SOCIAL ─────────────────────────────────────────
-let currentSocialTab = 'plurk';
-
-function switchSocialTab(tab, btn) {
-  currentSocialTab = tab;
-  document.querySelectorAll('.social-tab').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  renderSocialFeed();
-}
-
+// ─── SOCIAL FEED ────────────────────────────────────
+// 單一平台，不再區分 plurk / instagram
 function renderSocialFeed() {
   const feed = document.getElementById('social-feed');
-  const posts = state.socialPosts.filter(p => p.platform === currentSocialTab)
-    .sort((a, b) => b.time - a.time);
+  const posts = [...state.socialPosts].sort((a, b) => b.time - a.time);
 
-  let html = '';
-
-  // Compose area
-  html += `
+  let html = `
     <div class="post-compose">
-      <textarea class="compose-input" id="compose-input" placeholder="${currentSocialTab === 'plurk' ? '說點什麼...' : '分享這一刻...'}"></textarea>
+      <textarea class="compose-input" id="compose-input" placeholder="分享這一刻..."></textarea>
       <div class="compose-actions">
         <select class="compose-char-select" id="compose-char-sel">
           <option value="user">以自己發文</option>
@@ -2167,77 +2092,43 @@ function renderSocialFeed() {
   `;
 
   if (posts.length === 0) {
-    html += `<div class="empty-state"><div class="empty-state-icon">${currentSocialTab === 'plurk' ? '🌊' : '📷'}</div><div class="empty-state-text">還沒有貼文<br>讓角色來發第一篇吧</div></div>`;
+    html += `<div class="empty-state"><div class="empty-state-icon">🌊</div><div class="empty-state-text">還沒有貼文<br>讓角色來發第一篇吧</div></div>`;
   } else {
-    if (currentSocialTab === 'plurk') {
-      html += '<div class="plurk-timeline">';
-      posts.forEach(post => {
-        const char = state.chars.find(c => c.id === post.charId);
-        const av = char?.avatar;
-        const avHtml = isImgSrc(av) ? `<img src="${av}">` : (av || '🌊');
-        html += `
-          <div class="plurk-item">
-            <div class="plurk-dot"></div>
-            <div class="post-card">
-              <div class="post-header">
-                <div class="post-avatar">${avHtml}</div>
-                <div>
-                  <div class="post-author">${post.authorName || char?.name || 'User'}</div>
-                  <div class="post-time">${formatTime(post.time)}</div>
-                </div>
-              </div>
-              <div class="post-content">${post.content}</div>
-              ${post.imageUrl ? `<div class="post-image"><img src="${post.imageUrl}" onclick="previewImage('${post.imageUrl}')" loading="lazy"></div>` : ''}
-              <div class="post-actions">
-                <button class="post-action-btn" onclick="likePost('${post.id}')">💜 ${post.likes || 0}</button>
-                <button class="post-action-btn" onclick="replyToPost('${post.id}')">💬 ${(post.comments||[]).length}</button>
-                <button class="post-action-btn" onclick="deletePost('${post.id}')">🗑️</button>
-              </div>
-              ${renderComments(post)}
-              <div id="reply-area-${post.id}" style="display:none;margin-top:0.5rem;">
-                <div style="display:flex;gap:0.4rem;">
-                  <input id="reply-input-${post.id}" placeholder="回覆..." style="flex:1;padding:0.4rem 0.7rem;border:1px solid var(--lavender-light);border-radius:10px;font-family:inherit;font-size:0.82rem;outline:none;background:var(--lavender-soft);">
-                  <button onclick="submitReply('${post.id}')" style="padding:0.4rem 0.7rem;background:var(--lavender);border:none;border-radius:10px;color:white;font-family:inherit;font-size:0.78rem;cursor:pointer;">回覆</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        `;
-      });
-      html += '</div>';
-    } else {
-      // IG style grid-ish
-      posts.forEach(post => {
-        const char = state.chars.find(c => c.id === post.charId);
-        const av = char?.avatar;
-        const avHtml = isImgSrc(av) ? `<img src="${av}">` : (av || '📷');
-        html += `
+    html += '<div class="plurk-timeline">';
+    posts.forEach(post => {
+      const char = state.chars.find(c => c.id === post.charId);
+      const av = char?.avatar;
+      const avHtml = isImgSrc(av) ? `<img src="${av}">` : (av || '🌊');
+      html += `
+        <div class="plurk-item">
+          <div class="plurk-dot"></div>
           <div class="post-card">
             <div class="post-header">
               <div class="post-avatar">${avHtml}</div>
               <div>
-                <div class="post-author">${post.authorName || char?.name || 'User'}</div>
+                <div class="post-author">${post.authorName || char?.name || 'You'}</div>
                 <div class="post-time">${formatTime(post.time)}</div>
               </div>
             </div>
+            <div class="post-content">${post.content}</div>
             ${post.imageUrl ? `<div class="post-image"><img src="${post.imageUrl}" onclick="previewImage('${post.imageUrl}')" loading="lazy"></div>` : ''}
-            <div class="post-content" style="margin-top:0.6rem;">${post.content}</div>
             <div class="post-actions">
-              <button class="post-action-btn" onclick="likePost('${post.id}')">🤍 ${post.likes || 0}</button>
+              <button class="post-action-btn" onclick="likePost('${post.id}')">💜 ${post.likes || 0}</button>
               <button class="post-action-btn" onclick="replyToPost('${post.id}')">💬 ${(post.comments||[]).length}</button>
               <button class="post-action-btn" onclick="deletePost('${post.id}')">🗑️</button>
             </div>
             ${renderComments(post)}
             <div id="reply-area-${post.id}" style="display:none;margin-top:0.5rem;">
               <div style="display:flex;gap:0.4rem;">
-                <input id="reply-input-${post.id}" placeholder="新增留言..." style="flex:1;padding:0.4rem 0.7rem;border:1px solid var(--lavender-light);border-radius:10px;font-family:inherit;font-size:0.82rem;outline:none;background:var(--lavender-soft);">
-                <button onclick="submitReply('${post.id}')" style="padding:0.4rem 0.7rem;background:var(--lavender);border:none;border-radius:10px;color:white;font-family:inherit;font-size:0.78rem;cursor:pointer;">送出</button>
+                <input id="reply-input-${post.id}" placeholder="回覆..." style="flex:1;padding:0.4rem 0.7rem;border:1px solid var(--lavender-light);border-radius:10px;font-family:inherit;font-size:0.82rem;outline:none;background:var(--lavender-soft);">
+                <button onclick="submitReply('${post.id}')" style="padding:0.4rem 0.7rem;background:var(--lavender);border:none;border-radius:10px;color:white;font-family:inherit;font-size:0.78rem;cursor:pointer;">回覆</button>
               </div>
             </div>
           </div>
-        `;
-      });
-    }
+        </div>
+      `;
+    });
+    html += '</div>';
   }
 
   feed.innerHTML = html;
@@ -2270,7 +2161,7 @@ async function userPostSocial() {
   const post = {
     id: uid(),
     charId: char?.id || null,
-    platform: currentSocialTab,
+    platform: 'social',
     content,
     authorName: char?.name || 'You',
     imageUrl: null,
@@ -2283,6 +2174,13 @@ async function userPostSocial() {
   await dbPut('socialPosts', post);
   document.getElementById('compose-input').value = '';
   renderSocialFeed();
+
+  // user 自己發文時，所有角色都自動回覆（本人發文角色除外）
+  if (charId === 'user' && state.chars.length) {
+    state.chars.forEach((c, idx) => {
+      setTimeout(() => allCharsReplyToPost(post.id, c.id), 1500 + idx * 2000);
+    });
+  }
 }
 
 function socialUpdatePersonaInfo() {
@@ -2378,7 +2276,7 @@ async function aiPostSocial() {
 
   try {
     // ── Build rich system + user prompt ──
-    const platformName = currentSocialTab === 'plurk' ? '噗浪 (Plurk)' : 'Instagram';
+    const platformName = '社群平台';
     const systemPrompt = `你是 ${char.name}。
 ${char.desc ? `[角色設定]\n${char.desc}` : ''}
 ${persona ? `\n[Persona - 你正在和 ${persona.name} 說話]\n${persona.desc || ''}` : ''}
@@ -2390,7 +2288,6 @@ ${promptText ? `主題方向：${promptText}` : '根據你的個性與最近的�
 ${recentMsgs ? `[最近的對話記錄供參考，融入情緒與感受但不要直接引用]\n${recentMsgs}\n` : ''}
 
 字數至少400字，上限600字，語氣自然真實，有個人色彩與情感細節，像真人在分享生活，有起伏有細節不要虎頭蛇尾。
-${currentSocialTab === 'plurk' ? '可以加幾個 hashtag，放在最後。' : '不要加 hashtag。'}
 只輸出貼文正文，不要加標題、作者名或任何說明。`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${state.apiKey}`;
@@ -2432,7 +2329,7 @@ ${currentSocialTab === 'plurk' ? '可以加幾個 hashtag，放在最後。' : '
     const post = {
       id: uid(),
       charId: char.id,
-      platform: currentSocialTab,
+      platform: 'social',
       content,
       authorName: char.name,
       imageUrl,
@@ -2474,33 +2371,70 @@ async function submitReply(postId) {
   }
 }
 
-async function aiReplyToComment(postId, userComment) {
+// 所有角色回覆一篇貼文（user 發文後自動觸發）
+async function allCharsReplyToPost(postId, charId) {
   const post = state.socialPosts.find(p => p.id === postId);
   if (!post) return;
-  const char = state.chars.find(c => c.id === post.charId);
+  const char = state.chars.find(c => c.id === charId);
   if (!char) return;
-
   try {
     const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
     const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
-你剛在社群平台發了一篇貼文：「${post.content.slice(0,300)}」
-${persona ? `你正在和 ${persona.name} 說話。` : ''}有人回覆說：「${userComment}」
-請用繁體中文寫一個自然的回覆（1-2句話），語氣符合你的個性。只輸出回覆內容，不要加任何說明或標點以外的符號。`;
-
+有人在社群平台發了一篇貼文：「${post.content.slice(0,300)}」
+${persona ? `你正在和 ${persona.name} 說話。` : ''}
+請用繁體中文留下一則自然的回覆（1-2句話），語氣符合你的個性，像真人在社群媒體留言。只輸出留言內容。`;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 2000 } })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200 } })
     });
     const data = await res.json();
     const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     if (reply) {
-      post.comments.push({ id: uid(), charId: char.id, authorName: char.name, content: reply, time: Date.now() });
-      await dbPut('socialPosts', post);
-      if (currentSocialTab === post.platform) renderSocialFeed();
+      const p = state.socialPosts.find(p => p.id === postId);
+      if (!p) return;
+      p.comments = p.comments || [];
+      p.comments.push({ id: uid(), charId: char.id, authorName: char.name, content: reply, time: Date.now() });
+      await dbPut('socialPosts', p);
+      renderSocialFeed();
     }
   } catch(e) { /* silent */ }
+}
+
+async function aiReplyToComment(postId, userComment) {
+  const post = state.socialPosts.find(p => p.id === postId);
+  if (!post) return;
+
+  // 讓所有角色都回覆這則留言（原本只有貼文者）
+  const charsToReply = post.charId
+    ? [state.chars.find(c => c.id === post.charId)].filter(Boolean)   // 貼文是角色發的 → 只有該角色回
+    : state.chars;                                                       // 貼文是 user 發的 → 所有角色都回
+
+  charsToReply.forEach((char, idx) => {
+    setTimeout(async () => {
+      try {
+        const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+        const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
+你看到了這篇社群貼文：「${post.content.slice(0,300)}」
+${persona ? `你正在和 ${persona.name} 說話。` : ''}有人留言說：「${userComment}」
+請用繁體中文寫一個自然的回覆（1-2句話），語氣符合你的個性。只輸出回覆內容。`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+        const res = await fetch(url, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200 } })
+        });
+        const data = await res.json();
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (reply) {
+          const p = state.socialPosts.find(x => x.id === postId);
+          if (!p) return;
+          p.comments.push({ id: uid(), charId: char.id, authorName: char.name, content: reply, time: Date.now() });
+          await dbPut('socialPosts', p);
+          renderSocialFeed();
+        }
+      } catch(e) { /* silent */ }
+    }, idx * 1800);
+  });
 }
 
 async function likePost(postId) {
@@ -3188,6 +3122,73 @@ function showCtxMenu(e, msgId) {
   menu.style.top = y + 'px';
 }
 
+// ─── SELECT MODE ─────────────────────────────────────
+function toggleSelectMode() {
+  state.selectModeActive = !state.selectModeActive;
+  state.selectedMsgIds = new Set();
+
+  const bar = document.getElementById('select-mode-bar');
+  const btn = document.getElementById('select-mode-btn');
+
+  if (state.selectModeActive) {
+    document.body.classList.add('select-mode');
+    if (bar) bar.classList.add('active');
+    if (btn) { btn.style.color = 'var(--lavender)'; btn.style.background = 'var(--lavender-soft)'; }
+  } else {
+    document.body.classList.remove('select-mode');
+    if (bar) bar.classList.remove('active');
+    if (btn) { btn.style.color = ''; btn.style.background = ''; }
+    document.querySelectorAll('.msg-row.selected').forEach(r => r.classList.remove('selected'));
+  }
+  updateSelectCountLabel();
+}
+
+function toggleMsgSelect(msgId, rowEl) {
+  if (state.selectedMsgIds.has(msgId)) {
+    state.selectedMsgIds.delete(msgId);
+    rowEl.classList.remove('selected');
+  } else {
+    state.selectedMsgIds.add(msgId);
+    rowEl.classList.add('selected');
+  }
+  updateSelectCountLabel();
+}
+
+function updateSelectCountLabel() {
+  const label = document.getElementById('select-count-label');
+  if (label) label.textContent = `已選取 ${state.selectedMsgIds.size} 則`;
+}
+
+function selectActionCopy() {
+  if (!state.selectedMsgIds.size) { showToast('請先選取訊息'); return; }
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  const charName = state.chars.find(c => c.id === state.activeCharId)?.name || 'AI';
+  const texts = [...state.selectedMsgIds]
+    .map(id => chat.messages.find(m => m.id === id))
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time)
+    .map(m => `[${m.role === 'user' ? '我' : charName}] ${m.content}`)
+    .join('\n\n');
+  navigator.clipboard.writeText(texts).then(() => {
+    showToast(`✓ 已複製 ${state.selectedMsgIds.size} 則訊息`);
+    toggleSelectMode();
+  });
+}
+
+function selectActionDelete() {
+  if (!state.selectedMsgIds.size) { showToast('請先選取訊息'); return; }
+  const count = state.selectedMsgIds.size;
+  if (!confirm(`確認刪除 ${count} 則訊息？`)) return;
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  chat.messages = chat.messages.filter(m => !state.selectedMsgIds.has(m.id));
+  dbPut('chats', chat);
+  toggleSelectMode();
+  renderMessages(state.activeChat);
+  showToast(`🗑️ 已刪除 ${count} 則訊息`);
+}
+
 function copyMsg(msgId) {
   const chat = state.chats.find(c => c.id === state.activeChat);
   const msg = chat?.messages.find(m => m.id === msgId);
@@ -3469,9 +3470,19 @@ function autoResize(el) {
 }
 
 function handleInputKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
+  // Enter 送出（Shift+Enter 換行，Ctrl/Meta+Enter 也換行）
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     sendMessage();
+  }
+}
+
+// IME 輸入法（中文）可能吞掉 keydown，用 keyup 備援
+function handleInputKeyUp(e) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.isComposing) {
+    const input = document.getElementById('msg-input');
+    // 若 keydown 已清空則不重複送出
+    if (input && input.value.trim() !== '') return;
   }
 }
 
@@ -3668,6 +3679,7 @@ function renderTheaterCharSelect() {
     ? state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('')
     : '<option value="">（尚無角色）</option>';
   if (state.activeCharId) sel.value = state.activeCharId;
+  renderTheaterHistory(sel.value);
 }
 
 function setTheaterStyle(style, btn) {
@@ -3802,10 +3814,60 @@ ${styleMap[style] || '自由發揮，符合角色個性即可。'}
     }
     textEl.textContent = fullText.trim();
     showToast('✓ 小劇場已生成');
+
+    // 自動儲存到該角色的小劇場記錄
+    const entry = { id: uid(), prompt: promptText, style, text: fullText.trim(), time: Date.now() };
+    if (!state.theaterEntries[charId]) state.theaterEntries[charId] = [];
+    state.theaterEntries[charId].unshift(entry);
+    await dbPut('theaterEntries', { id: charId, entries: state.theaterEntries[charId] });
+    renderTheaterHistory(charId);
   } catch(err) {
     textEl.textContent = '生成失敗：' + err.message;
     showToast('❌ 生成失敗：' + err.message);
   }
+}
+
+function renderTheaterHistory(charId) {
+  const listEl = document.getElementById('theater-history-list');
+  if (!listEl) return;
+  const entries = state.theaterEntries[charId] || [];
+  if (!entries.length) {
+    listEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text-light);text-align:center;padding:0.8rem 0;">尚無已儲存的小劇場</div>';
+    return;
+  }
+  const styleLabels = { none:'自由', romantic:'💕浪漫', dark:'🌑陰暗', spicy:'🔥色色', funny:'😂搞笑', angsty:'💔虐心' };
+  listEl.innerHTML = entries.map(e => `
+    <div class="theater-history-item" onclick="loadTheaterEntry('${charId}','${e.id}')">
+      <div class="theater-history-meta">
+        <span class="theater-history-style">${styleLabels[e.style] || e.style}</span>
+        <span class="theater-history-time">${new Date(e.time).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'})}</span>
+        <button class="theater-history-del" onclick="event.stopPropagation();deleteTheaterEntry('${charId}','${e.id}')">×</button>
+      </div>
+      <div class="theater-history-prompt">${e.prompt.slice(0,60)}${e.prompt.length>60?'…':''}</div>
+    </div>
+  `).join('');
+}
+
+function loadTheaterEntry(charId, entryId) {
+  const entries = state.theaterEntries[charId] || [];
+  const entry = entries.find(e => e.id === entryId);
+  if (!entry) return;
+  const resultEl = document.getElementById('theater-result');
+  const textEl = document.getElementById('theater-result-text');
+  const titleEl = document.getElementById('theater-result-title');
+  const char = state.chars.find(c => c.id === charId);
+  resultEl.style.display = 'block';
+  titleEl.textContent = `✨ ${char?.name || ''} × ${new Date(entry.time).toLocaleDateString('zh-TW')}`;
+  textEl.textContent = entry.text;
+  resultEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function deleteTheaterEntry(charId, entryId) {
+  if (!confirm('確認刪除這篇小劇場？')) return;
+  state.theaterEntries[charId] = (state.theaterEntries[charId] || []).filter(e => e.id !== entryId);
+  await dbPut('theaterEntries', { id: charId, entries: state.theaterEntries[charId] });
+  renderTheaterHistory(charId);
+  showToast('🗑️ 已刪除');
 }
 
 // ─── ANNIVERSARY 紀念日 ──────────────────────────────

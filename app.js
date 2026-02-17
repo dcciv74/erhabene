@@ -235,17 +235,16 @@ function switchPage(page) {
     sidebarTitle.textContent = '角色';
     sidebarAddBtn.textContent = '＋ 新增角色';
     sidebarAddBtn.onclick = () => openModal('add-char-modal');
-  } else if (page === 'theater') {
-    renderTheaterCharSelect();
-  } else if (page === 'achievements') {
-    renderAchievementCharSelect();
-    renderAchievements();
-  }
     renderCharsGrid();
   } else if (page === 'social') {
     renderSocialFeed();
   } else if (page === 'diary') {
     initDiary();
+  } else if (page === 'theater') {
+    renderTheaterCharSelect();
+  } else if (page === 'achievements') {
+    renderAchievementCharSelect();
+    renderAchievements();
   }
 }
 

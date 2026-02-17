@@ -59,7 +59,7 @@ Stay in character. Be warm, casual, and emotionally real.`,
 // ─── INDEXEDDB ─────────────────────────────────────
 function initDB() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open('erhabene', 4);
+    const req = indexedDB.open('erhabene', 5);
     req.onupgradeneeded = e => {
       const db = e.target.result;
       const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries'];

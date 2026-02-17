@@ -281,7 +281,7 @@ function renderSidebar(mode = 'chat') {
       const preview = lastMsg ? applyRegex(lastMsg.content.slice(0,40)) : '（新對話）';
       const timeStr = lastMsg ? formatTime(lastMsg.time) : '';
       const isActive = chat.id === state.activeChat;
-      const avatarHtml = char.avatar?.startsWith('http')
+      const avatarHtml = isImgSrc(char.avatar)
         ? `<img src="${char.avatar}" alt="">`
         : `<span>${char.avatar || '🌸'}</span>`;
 
@@ -324,7 +324,7 @@ function showCharPickerForNewChat() {
           <div onclick="createNewChat('${c.id}');this.closest('.modal-overlay').remove()" 
                style="display:flex;align-items:center;gap:0.8rem;padding:0.8rem;background:var(--lavender-soft);border-radius:14px;cursor:pointer;border:1px solid rgba(201,184,232,0.2)">
             <div style="width:40px;height:40px;border-radius:13px;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));display:flex;align-items:center;justify-content:center;font-size:1.2rem;overflow:hidden;">
-              ${c.avatar?.startsWith('http') ? `<img src="${c.avatar}" style="width:100%;height:100%;object-fit:cover">` : (c.avatar || '🌸')}
+              ${isImgSrc(c.avatar) ? `<img src="${c.avatar}" style="width:100%;height:100%;object-fit:cover">` : (c.avatar || '🌸')}
             </div>
             <div>
               <div style="font-weight:500;color:var(--text-dark)">${c.name}</div>
@@ -385,7 +385,8 @@ function openChat(chatId) {
   if (emptyChat) emptyChat.style.display = 'none';
 
   const avatarDiv = document.getElementById('header-avatar');
-  avatarDiv.innerHTML = char.avatar?.startsWith('http')
+  const isImgAv = isImgSrc(char.avatar) || char.avatar?.startsWith('data:');
+  avatarDiv.innerHTML = isImgAv
     ? `<img src="${char.avatar}" alt="">` : (char.avatar || '🌸');
   document.getElementById('header-name').textContent = char.name;
   document.getElementById('header-status').textContent = '在線';
@@ -453,7 +454,8 @@ function renderMessages(chatId) {
       let avatarHtml = '';
       if (group.role === 'ai') {
         const av = char?.avatar;
-        const avContent = av?.startsWith('http') ? `<img src="${av}" alt="">` : (av || '🌸');
+        const isImgSrc = av?.startsWith('http') || av?.startsWith('data:');
+        const avContent = isImgSrc ? `<img src="${av}" alt="">` : (av || '🌸');
         avatarHtml = idx === 0
           ? `<div class="msg-avatar">${avContent}</div>`
           : `<div class="msg-avatar-spacer"></div>`;
@@ -472,15 +474,38 @@ function renderMessages(chatId) {
       const timeEl = idx === group.messages.length - 1
         ? `<div class="msg-time">${formatTime(msg.time)}</div>` : '';
 
-      if (group.role === 'user') {
-        row.innerHTML = `${timeEl}${bubbleContent}`;
+      // Hover action buttons
+      const isUser = group.role === 'user';
+      const actionsHtml = `<div class="msg-actions ${isUser ? 'msg-actions-left' : 'msg-actions-right'}">
+        <button class="msg-action-btn" onclick="startInlineEdit('${msg.id}')" title="編輯">✏️</button>
+        <button class="msg-action-btn" onclick="copyMsg('${msg.id}')" title="複製">📋</button>
+        ${!isUser ? `<button class="msg-action-btn" onclick="ctxRegenFromMsg('${msg.id}')" title="重新生成">🔄</button>` : ''}
+        <button class="msg-action-btn danger" onclick="deleteMsgDirect('${msg.id}')" title="刪除">🗑️</button>
+      </div>`;
+
+      if (isUser) {
+        row.innerHTML = `${actionsHtml}${timeEl}${bubbleContent}`;
       } else {
-        row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}`;
+        row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}${actionsHtml}`;
       }
 
+      // Desktop: right-click context menu
       row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
-      row.addEventListener('touchstart', handleLongPress.bind(null, msg.id), { passive: true });
+      // Mobile: long press → show inline actions panel
+      row.addEventListener('touchstart', e => {
+        longPressTimer = setTimeout(() => {
+          // Hide all other mobile action panels
+          document.querySelectorAll('.msg-actions.mobile-show').forEach(el => el.classList.remove('mobile-show'));
+          const actions = row.querySelector('.msg-actions');
+          if (actions) actions.classList.add('mobile-show');
+          // Tap anywhere else to dismiss
+          setTimeout(() => document.addEventListener('touchstart', () => {
+            document.querySelectorAll('.msg-actions.mobile-show').forEach(el => el.classList.remove('mobile-show'));
+          }, { once: true }), 100);
+        }, 500);
+      }, { passive: true });
       row.addEventListener('touchend', clearLongPress);
+      row.addEventListener('touchmove', clearLongPress, { passive: true });
 
       groupEl.appendChild(row);
     });
@@ -489,7 +514,7 @@ function renderMessages(chatId) {
   });
 
   // Typing indicator placeholder
-  area.innerHTML += `<div id="typing-indicator" style="display:none;"><div class="msg-group ai"><div class="msg-row"><div class="msg-avatar">${(() => { const c = state.chars.find(c=>c.id===state.activeCharId); const av = c?.avatar; return av?.startsWith('http') ? `<img src="${av}">` : (av||'🌸'); })()}</div><div class="msg-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div></div></div></div>`;
+  area.innerHTML += `<div id="typing-indicator" style="display:none;"><div class="msg-group ai"><div class="msg-row"><div class="msg-avatar">${(() => { const c = state.chars.find(c=>c.id===state.activeCharId); const av = c?.avatar; return isImgSrc(av) ? `<img src="${av}">` : (av||'🌸'); })()}</div><div class="msg-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div></div></div></div>`;
 
   scrollToBottom();
 }
@@ -822,7 +847,21 @@ function toggleMemoryPanel() {
 //   enabled, constant, selective, case_sensitive,
 //   insertion_order, position, scan_depth, token_budget}
 function getLorebookMatches(text) {
-  return state.lorebook
+  // Gather all applicable lorebook entries
+  const allEntries = [...state.lorebook];
+
+  // Add active char's lorebook
+  if (state.activeCharId) {
+    const char = state.chars.find(c => c.id === state.activeCharId);
+    if (char?.lorebook) allEntries.push(...char.lorebook);
+  }
+  // Add current chat's lorebook
+  if (state.activeChat) {
+    const chat = state.chats.find(c => c.id === state.activeChat);
+    if (chat?.lorebook) allEntries.push(...chat.lorebook);
+  }
+
+  return allEntries
     .filter(entry => {
       if (!entry.enabled) return false;
       if (entry.constant) return true;
@@ -835,20 +874,101 @@ function getLorebookMatches(text) {
 }
 
 let lorebookEditId = null;
+let currentLbTab = 'global'; // 'global' | 'char' | 'chat'
+
+function switchLbTab(tab, btn) {
+  currentLbTab = tab;
+  document.querySelectorAll('#lorebook-modal .modal-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  lorebookEditId = null;
+
+  const charSel = document.getElementById('lb-char-selector');
+  const infoEl = document.getElementById('lb-scope-info');
+  const infos = {
+    global: ['🌍','全域：對所有對話生效 · Constant 永遠注入 · 關鍵字觸發注入'],
+    char:   ['🌸','角色：僅對選定角色的所有對話生效'],
+    chat:   ['💬','聊天：僅在目前聊天視窗生效，不影響其他對話'],
+  };
+  if (infoEl) infoEl.innerHTML = `<span>${infos[tab][0]}</span><span>${infos[tab][1]}</span>`;
+  if (charSel) charSel.style.display = tab === 'char' ? 'block' : 'none';
+
+  renderLorebookList();
+}
+
+function _getLbStore() {
+  // Returns the lorebook array for current scope
+  if (currentLbTab === 'global') return state.lorebook;
+  if (currentLbTab === 'char') {
+    const charId = document.getElementById('lb-char-sel')?.value;
+    if (!charId) return [];
+    const char = state.chars.find(c => c.id === charId);
+    if (!char) return [];
+    if (!char.lorebook) char.lorebook = [];
+    return char.lorebook;
+  }
+  if (currentLbTab === 'chat') {
+    const chat = state.chats.find(c => c.id === state.activeChat);
+    if (!chat) return [];
+    if (!chat.lorebook) chat.lorebook = [];
+    return chat.lorebook;
+  }
+  return state.lorebook;
+}
+
+function _saveLbEntry(entry) {
+  if (currentLbTab === 'global') {
+    dbPut('lorebook', entry);
+  } else if (currentLbTab === 'char') {
+    const charId = document.getElementById('lb-char-sel')?.value;
+    const char = state.chars.find(c => c.id === charId);
+    if (char) dbPut('chars', char);
+  } else if (currentLbTab === 'chat') {
+    const chat = state.chats.find(c => c.id === state.activeChat);
+    if (chat) dbPut('chats', chat);
+  }
+}
+
+function _deleteLbEntry(id) {
+  if (currentLbTab === 'global') {
+    state.lorebook = state.lorebook.filter(l => l.id !== id);
+    dbDelete('lorebook', id);
+  } else if (currentLbTab === 'char') {
+    const charId = document.getElementById('lb-char-sel')?.value;
+    const char = state.chars.find(c => c.id === charId);
+    if (char) { char.lorebook = (char.lorebook||[]).filter(l => l.id !== id); dbPut('chars', char); }
+  } else if (currentLbTab === 'chat') {
+    const chat = state.chats.find(c => c.id === state.activeChat);
+    if (chat) { chat.lorebook = (chat.lorebook||[]).filter(l => l.id !== id); dbPut('chats', chat); }
+  }
+}
 
 function renderLorebookList() {
   const list = document.getElementById('lorebook-list');
+  if (!list) return;
+  const entries = _getLbStore();
   const countEl = document.getElementById('lb-count');
-  const total = state.lorebook.length;
-  const enabled = state.lorebook.filter(e => e.enabled).length;
+  const total = entries.length;
+  const enabled = entries.filter(e => e.enabled).length;
   if (countEl) countEl.textContent = `${enabled} / ${total} 條目啟用`;
 
-  if (!state.lorebook.length) {
-    list.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:2rem 1rem;border:1.5px dashed rgba(201,184,232,0.3);border-radius:12px;">尚無條目 — 點擊「＋ 新增條目」建立第一個世界資訊</div>';
+  if (currentLbTab === 'char') {
+    const charId = document.getElementById('lb-char-sel')?.value;
+    if (!charId) {
+      list.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:2rem;">請先選擇角色</div>';
+      return;
+    }
+  }
+  if (currentLbTab === 'chat' && !state.activeChat) {
+    list.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:2rem;">請先開啟一個聊天視窗</div>';
     return;
   }
 
-  list.innerHTML = state.lorebook.map(e => {
+  if (!entries.length) {
+    list.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:2rem 1rem;border:1.5px dashed rgba(201,184,232,0.3);border-radius:12px;">尚無條目 — 點擊「＋ 新增條目」建立</div>';
+    return;
+  }
+
+  list.innerHTML = entries.map(e => {
     const keys = e.keys || e.keywords || [];
     const keyStr = keys.join(', ') || '（無關鍵字）';
     const isOpen = lorebookEditId === e.id;
@@ -959,10 +1079,11 @@ function toggleLorebookEntry(id) {
 function lbCancelEdit() { lorebookEditId = null; renderLorebookList(); }
 
 function lbToggleEnabled(id, enabled) {
-  const e = state.lorebook.find(l => l.id === id);
+  const entries = _getLbStore();
+  const e = entries.find(l => l.id === id);
   if (e) {
     e.enabled = enabled;
-    dbPut('lorebook', e);
+    _saveLbEntry(e);
     // Update toggle button visual immediately
     const btn = document.querySelector(`#lb-entry-${id} .lb-toggle`);
     if (btn) btn.classList.toggle('on', enabled);
@@ -974,8 +1095,9 @@ function lbToggleEnabled(id, enabled) {
 function renderLorebookCount() {
   const countEl = document.getElementById('lb-count');
   if (countEl) {
-    const total = state.lorebook.length;
-    const enabled = state.lorebook.filter(e => e.enabled).length;
+    const entries = _getLbStore();
+    const total = entries.length;
+    const enabled = entries.filter(e => e.enabled).length;
     countEl.textContent = `${enabled} / ${total} 條目啟用`;
   }
 }
@@ -996,7 +1118,7 @@ function lbSaveEntry(id) {
   e.selective = document.getElementById('lb-sel-'+id)?.checked || false;
   e.case_sensitive = document.getElementById('lb-case-'+id)?.checked || false;
   e.keywords = e.keys; // backward compat
-  dbPut('lorebook', e);
+  _saveLbEntry(e);
   lorebookEditId = null;
   renderLorebookList();
   showToast('✓ 條目已儲存');
@@ -1008,8 +1130,9 @@ function addLorebookEntry() {
     comment: '', enabled: true, constant: false, selective: false, case_sensitive: false,
     insertion_order: 100, position: 'before_char', scan_depth: 4, token_budget: 400
   };
-  state.lorebook.push(entry);
-  dbPut('lorebook', entry);
+  const store = _getLbStore();
+  store.push(entry);
+  _saveLbEntry(entry);
   lorebookEditId = entry.id;
   renderLorebookList();
   setTimeout(() => {
@@ -1022,8 +1145,7 @@ function toggleLorebook(id, enabled) { lbToggleEnabled(id, enabled); }
 
 function deleteLorebook(id) {
   if (!confirm('確認刪除此條目？')) return;
-  state.lorebook = state.lorebook.filter(l => l.id !== id);
-  dbDelete('lorebook', id);
+  _deleteLbEntry(id);
   if (lorebookEditId === id) lorebookEditId = null;
   renderLorebookList();
 }
@@ -1037,33 +1159,158 @@ async function saveLorebook() {
 // ─── PERSONA ────────────────────────────────────────
 function renderPersonaList() {
   const list = document.getElementById('persona-list');
-  list.innerHTML = state.personas.map(p => `
-    <div style="background:var(--lavender-soft);border-radius:12px;padding:0.8rem;margin-bottom:0.5rem;border:1px solid rgba(201,184,232,0.2);">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div style="font-weight:500;color:var(--text-dark)">${p.name}</div>
-        <button onclick="deletePersona('${p.id}')" style="background:none;border:none;cursor:pointer;color:#e87878;font-size:0.85rem">刪除</button>
-      </div>
-      <div style="font-size:0.78rem;color:var(--text-light);margin-top:0.2rem">${(p.desc||'').slice(0,60)}</div>
-    </div>
-  `).join('') || '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:1rem;">還沒有設定 Persona</div>';
+  if (!list) return;
+  if (!state.personas.length) {
+    list.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:0.82rem;padding:1.5rem;">還沒有 Persona — 點擊「＋ 新增」建立</div>';
+    return;
+  }
+  list.innerHTML = state.personas.map(p => {
+    const isImg = p.avatar?.startsWith('http') || p.avatar?.startsWith('data:');
+    const avEl = isImg ? `<img src="${p.avatar}" style="width:100%;height:100%;object-fit:cover;">` : (p.avatar || '🎭');
+    const boundChars = state.chars.filter(c => c.personaId === p.id);
+    const boundHtml = boundChars.length
+      ? boundChars.map(c => `<span style="font-size:0.68rem;background:rgba(201,184,232,0.3);color:var(--lavender);padding:0.15rem 0.5rem;border-radius:8px;">${c.name}</span>`).join('')
+      : `<span style="font-size:0.68rem;color:var(--text-light);">未綁定角色</span>`;
+    return `
+      <div style="background:rgba(255,255,255,0.88);border-radius:16px;padding:0.9rem;border:1.5px solid rgba(201,184,232,0.2);display:flex;align-items:center;gap:0.9rem;">
+        <div style="width:52px;height:52px;border-radius:16px;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));display:flex;align-items:center;justify-content:center;font-size:1.6rem;overflow:hidden;flex-shrink:0;">${avEl}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;font-size:0.9rem;color:var(--text-dark);margin-bottom:0.2rem;">${p.name}</div>
+          <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:0.4rem;line-height:1.4;">${(p.desc||'').slice(0,60)}${(p.desc||'').length>60?'…':''}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:0.3rem;">${boundHtml}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.3rem;flex-shrink:0;">
+          <button onclick="openEditPersonaPanel('${p.id}')" style="padding:0.3rem 0.6rem;background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:8px;font-family:inherit;font-size:0.72rem;color:var(--text-mid);cursor:pointer;">編輯</button>
+          <button onclick="deletePersona('${p.id}')" style="padding:0.3rem 0.6rem;background:none;border:1px solid rgba(232,120,120,0.3);border-radius:8px;font-family:inherit;font-size:0.72rem;color:#e87878;cursor:pointer;">刪除</button>
+        </div>
+      </div>`;
+  }).join('');
 }
 
-async function addPersona() {
-  const name = prompt('Persona 名稱（你的角色名）：');
-  if (!name) return;
-  const desc = prompt('描述（選填）：') || '';
-  const persona = { id: uid(), name, desc };
-  state.personas.push(persona);
-  await dbPut('personas', persona);
+let editingPersonaId = null;
+
+function openAddPersonaPanel() {
+  editingPersonaId = null;
+  document.getElementById('persona-panel-title').textContent = '＋ 新增 Persona';
+  document.getElementById('persona-name-input').value = '';
+  document.getElementById('persona-desc-input').value = '';
+  document.getElementById('persona-avatar-preview').innerHTML = '🎭';
+  delete document.getElementById('persona-avatar-file').dataset.base64;
+  _renderPersonaCharCheckboxes(null);
+  document.getElementById('persona-edit-panel').style.display = 'block';
+}
+
+function openEditPersonaPanel(id) {
+  const p = state.personas.find(x => x.id === id);
+  if (!p) return;
+  editingPersonaId = id;
+  document.getElementById('persona-panel-title').textContent = `✏️ 編輯：${p.name}`;
+  document.getElementById('persona-name-input').value = p.name;
+  document.getElementById('persona-desc-input').value = p.desc || '';
+  const prev = document.getElementById('persona-avatar-preview');
+  const isImg = p.avatar?.startsWith('http') || p.avatar?.startsWith('data:');
+  prev.innerHTML = isImg ? `<img src="${p.avatar}" style="width:100%;height:100%;object-fit:cover;">` : (p.avatar || '🎭');
+  if (p.avatar?.startsWith('data:')) document.getElementById('persona-avatar-file').dataset.base64 = p.avatar;
+  else delete document.getElementById('persona-avatar-file').dataset.base64;
+  _renderPersonaCharCheckboxes(id);
+  document.getElementById('persona-edit-panel').style.display = 'block';
+}
+
+function _renderPersonaCharCheckboxes(personaId) {
+  const box = document.getElementById('persona-char-checkboxes');
+  if (!box) return;
+  if (!state.chars.length) {
+    box.innerHTML = '<span style="font-size:0.75rem;color:var(--text-light);">尚無角色</span>';
+    return;
+  }
+  box.innerHTML = state.chars.map(c => {
+    const isImg = c.avatar?.startsWith('http') || c.avatar?.startsWith('data:');
+    const avEl = isImg ? `<img src="${c.avatar}" style="width:20px;height:20px;border-radius:6px;object-fit:cover;vertical-align:middle;margin-right:4px;">` : `<span style="margin-right:4px;">${c.avatar||'🌸'}</span>`;
+    const checked = personaId && c.personaId === personaId ? 'checked' : '';
+    return `<label style="display:flex;align-items:center;gap:0.3rem;padding:0.3rem 0.6rem;background:rgba(255,255,255,0.8);border:1px solid rgba(201,184,232,0.2);border-radius:10px;cursor:pointer;font-size:0.78rem;color:var(--text-dark);">
+      <input type="checkbox" value="${c.id}" ${checked} style="accent-color:var(--lavender);">${avEl}${c.name}
+    </label>`;
+  }).join('');
+}
+
+function cancelPersonaEdit() {
+  editingPersonaId = null;
+  document.getElementById('persona-edit-panel').style.display = 'none';
+}
+
+function handlePersonaAvatarUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const base64 = e.target.result;
+    event.target.dataset.base64 = base64;
+    const prev = document.getElementById('persona-avatar-preview');
+    prev.innerHTML = `<img src="${base64}" style="width:100%;height:100%;object-fit:cover;">`;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function savePersonaFromPanel() {
+  const name = document.getElementById('persona-name-input').value.trim();
+  if (!name) { showToast('請輸入名稱'); return; }
+  const desc = document.getElementById('persona-desc-input').value.trim();
+  const fileInput = document.getElementById('persona-avatar-file');
+  const avatar = fileInput.dataset.base64 || '';
+
+  // Get checked chars
+  const checked = [...document.querySelectorAll('#persona-char-checkboxes input[type=checkbox]:checked')].map(i => i.value);
+
+  if (editingPersonaId) {
+    const p = state.personas.find(x => x.id === editingPersonaId);
+    if (!p) return;
+    p.name = name; p.desc = desc;
+    if (avatar) p.avatar = avatar;
+    await dbPut('personas', p);
+    // Update char bindings
+    for (const char of state.chars) {
+      const wasLinked = char.personaId === editingPersonaId;
+      const nowLinked = checked.includes(char.id);
+      if (wasLinked !== nowLinked) {
+        char.personaId = nowLinked ? editingPersonaId : null;
+        await dbPut('chars', char);
+      }
+    }
+    showToast('✓ Persona 已更新');
+  } else {
+    const p = { id: uid(), name, desc, avatar };
+    state.personas.push(p);
+    await dbPut('personas', p);
+    // Bind selected chars
+    for (const char of state.chars) {
+      if (checked.includes(char.id)) {
+        char.personaId = p.id;
+        await dbPut('chars', char);
+      }
+    }
+    showToast('✓ Persona 已建立');
+  }
+
+  cancelPersonaEdit();
   renderPersonaList();
   updateCharPersonaSelects();
-  document.getElementById('persona-display').textContent = name;
+  const allPersonaNames = state.personas.map(p => p.name).join('、');
+  const dispEl = document.getElementById('persona-display');
+  if (dispEl) dispEl.textContent = state.personas.length ? state.personas[0].name : '未設定';
 }
 
+async function addPersona() { openAddPersonaPanel(); }
+
 async function deletePersona(id) {
+  if (!confirm('確認刪除此 Persona？')) return;
   state.personas = state.personas.filter(p => p.id !== id);
   await dbDelete('personas', id);
+  // Unlink chars
+  for (const char of state.chars) {
+    if (char.personaId === id) { char.personaId = null; await dbPut('chars', char); }
+  }
   renderPersonaList();
+  updateCharPersonaSelects();
 }
 
 // ─── CHARACTERS ─────────────────────────────────────
@@ -1074,7 +1321,7 @@ function renderCharsGrid() {
   state.chars.forEach(char => {
     const card = document.createElement('div');
     card.className = 'char-card';
-    const avContent = char.avatar?.startsWith('http')
+    const avContent = isImgSrc(char.avatar)
       ? `<img src="${char.avatar}" alt="">` : (char.avatar || '🌸');
     card.innerHTML = `
       <div class="char-card-avatar">${avContent}</div>
@@ -1123,7 +1370,7 @@ async function saveChar() {
     // 若目前聊天就是這個角色，刷新 header
     if (state.activeCharId === char.id) {
       const avatarDiv = document.getElementById('header-avatar');
-      if (avatarDiv) avatarDiv.innerHTML = char.avatar?.startsWith('data:') || char.avatar?.startsWith('http')
+      if (avatarDiv) avatarDiv.innerHTML = char.avatar?.startsWith('data:') || isImgSrc(char.avatar)
         ? `<img src="${char.avatar}" alt="">` : (char.avatar || '🌸');
       document.getElementById('header-name').textContent = char.name;
     }
@@ -1235,7 +1482,7 @@ function editChar(charId) {
   // 若是 base64 圖片，顯示預覽但不填入 input
   const preview = document.getElementById('char-avatar-preview');
   if (preview) {
-    const isImg = char.avatar?.startsWith('data:') || char.avatar?.startsWith('http');
+    const isImg = char.avatar?.startsWith('data:') || isImgSrc(char.avatar);
     preview.innerHTML = isImg
       ? `<img src="${char.avatar}" style="width:48px;height:48px;border-radius:12px;object-fit:cover;">`
       : `<span style="font-size:2rem">${char.avatar || '🌸'}</span>`;
@@ -1526,7 +1773,7 @@ function renderSocialFeed() {
       posts.forEach(post => {
         const char = state.chars.find(c => c.id === post.charId);
         const av = char?.avatar;
-        const avHtml = av?.startsWith('http') ? `<img src="${av}">` : (av || '🌊');
+        const avHtml = isImgSrc(av) ? `<img src="${av}">` : (av || '🌊');
         html += `
           <div class="plurk-item">
             <div class="plurk-dot"></div>
@@ -1562,7 +1809,7 @@ function renderSocialFeed() {
       posts.forEach(post => {
         const char = state.chars.find(c => c.id === post.charId);
         const av = char?.avatar;
-        const avHtml = av?.startsWith('http') ? `<img src="${av}">` : (av || '📷');
+        const avHtml = isImgSrc(av) ? `<img src="${av}">` : (av || '📷');
         html += `
           <div class="post-card">
             <div class="post-header">
@@ -1600,7 +1847,7 @@ function renderComments(post) {
   return `<div class="post-comments">${post.comments.map(c => {
     const char = state.chars.find(ch => ch.id === c.charId);
     const av = char?.avatar;
-    const avHtml = av?.startsWith('http') ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;">` : (av || '💬');
+    const avHtml = isImgSrc(av) ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;">` : (av || '💬');
     return `
       <div class="comment-item">
         <div class="comment-avatar">${avHtml}</div>
@@ -1840,7 +2087,7 @@ async function loadDiaryForDate(dateStr) {
   if (entries.length) {
     content.innerHTML = entries.map(e => {
       const av = e.char.avatar;
-      const avHtml = av?.startsWith('http') ? `<img src="${av}">` : (av || '🌸');
+      const avHtml = isImgSrc(av) ? `<img src="${av}">` : (av || '🌸');
       const safeText = e.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       return `
         <div class="diary-entry" style="margin-bottom:1rem;">
@@ -2245,6 +2492,26 @@ function showCtxMenu(e, msgId) {
   menu.style.top = y + 'px';
 }
 
+function copyMsg(msgId) {
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const msg = chat?.messages.find(m => m.id === msgId);
+  if (msg) navigator.clipboard.writeText(msg.content).then(() => showToast('✓ 已複製'));
+}
+
+function deleteMsgDirect(msgId) {
+  if (!confirm('確認刪除這則訊息？')) return;
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  chat.messages = chat.messages.filter(m => m.id !== msgId);
+  dbPut('chats', chat);
+  renderMessages(state.activeChat);
+}
+
+function ctxRegenFromMsg(msgId) {
+  state.ctxTargetMsgId = msgId;
+  regenLastMessage();
+}
+
 function ctxAction(action) {
   const menu = document.getElementById('ctx-menu');
   menu.classList.remove('open');
@@ -2256,10 +2523,7 @@ function ctxAction(action) {
   if (action === 'copy') {
     navigator.clipboard.writeText(msg.content).then(() => showToast('✓ 已複製'));
   } else if (action === 'delete') {
-    if (!confirm('確認刪除這則訊息？')) return;
-    chat.messages = chat.messages.filter(m => m.id !== state.ctxTargetMsgId);
-    dbPut('chats', chat);
-    renderMessages(state.activeChat);
+    deleteMsgDirect(state.ctxTargetMsgId);
   } else if (action === 'regen') {
     regenLastMessage();
   } else if (action === 'edit') {
@@ -2364,8 +2628,28 @@ function openStickerPicker() {
 function openModal(id) {
   document.getElementById(id).classList.add('open');
   // Populate dynamic content
-  if (id === 'lorebook-modal') renderLorebookList();
-  if (id === 'persona-modal') renderPersonaList();
+  if (id === 'lorebook-modal') {
+    // populate char selector
+    const charSel = document.getElementById('lb-char-sel');
+    if (charSel) {
+      charSel.innerHTML = '<option value="">選擇角色...</option>' +
+        state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      // pre-select active char
+      if (state.activeCharId) charSel.value = state.activeCharId;
+    }
+    currentLbTab = 'global';
+    const tabGlobal = document.getElementById('lb-tab-global');
+    const tabChar = document.getElementById('lb-tab-char');
+    const tabChat = document.getElementById('lb-tab-chat');
+    if (tabGlobal) { tabGlobal.classList.add('active'); tabChar?.classList.remove('active'); tabChat?.classList.remove('active'); }
+    document.getElementById('lb-char-selector').style.display = 'none';
+    renderLorebookList();
+  }
+  if (id === 'persona-modal') {
+    renderPersonaList();
+    document.getElementById('persona-edit-panel').style.display = 'none';
+    editingPersonaId = null;
+  }
   if (id === 'preset-modal') {
     document.getElementById('system-prompt-input').value = state.systemPrompt;
     document.getElementById('jailbreak-input').value = state.jailbreak;
@@ -2425,6 +2709,18 @@ document.addEventListener('click', () => document.getElementById('ctx-menu')?.cl
 // ─── UTILITIES ───────────────────────────────────────
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+// Universal avatar check
+function isImgSrc(av) { return av?.startsWith('http') || av?.startsWith('data:'); }
+function renderAv(av, fallback='🌸', style='') {
+  return isImgSrc(av) ? `<img src="${av}" alt="" ${style}>` : (av || fallback);
+}
+
+// Universal avatar HTML helper
+function avHtml(av, size='') {
+  const isImg = av?.startsWith('http') || av?.startsWith('data:');
+  return isImg ? `<img src="${av}" alt="" ${size}>` : (av || '🌸');
 }
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -2695,6 +2991,7 @@ async function _doGenerateTheater(charId, promptText) {
   if (!char) return;
   const style = state.theaterStyle || 'romantic';
   const styleMap = {
+    none:     '',
     romantic: '文風浪漫甜蜜，充滿曖昧與心動，有細膩的情感描寫，每個眼神和動作都令人臉紅。',
     dark:     '文風陰暗深沉，帶著壓抑的情感與糾葛，有強烈的心理衝突和宿命感。',
     spicy:    '文風色色撩人，有露骨的情慾描寫，大膽直白，情節熱辣火辣。',
@@ -2738,7 +3035,7 @@ ${annexInfo ? `【感情里程碑】\n${annexInfo}\n` : ''}
 ${promptText}
 
 【文風要求】
-${styleMap[style]}
+${styleMap[style] || '自由發揮，符合角色個性即可。'}
 
 【格式要求】
 - 寫一段 700～900 字的完整小劇場場景

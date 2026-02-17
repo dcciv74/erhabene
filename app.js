@@ -2890,7 +2890,7 @@ ${memText ? `你們的共同記憶：${memText}` : ''}
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 150 }
+        generationConfig: { maxOutputTokens: 1024 }
       })
     });
     const data = await res.json();
@@ -3117,7 +3117,7 @@ ${persona ? `你正在和 ${persona.name} 說話。${persona.desc ? persona.desc
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 1.1, maxOutputTokens: 200 }
+        generationConfig: { temperature: 1.1, maxOutputTokens: 1024 }
       })
     });
     const data = await res.json();

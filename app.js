@@ -43,7 +43,7 @@ Stay in character. Be warm, casual, and emotionally real.`,
   diaryMonth: new Date(),
   selectedDiaryDate: null,
   ctxTargetMsgId: null,
-  autoMsgEnabled: true,
+  autoMsgEnabled: false,
   autoMsgHours: 3,
   autoMsgTimer: null,
   editingCharId: null,
@@ -54,6 +54,14 @@ Stay in character. Be warm, casual, and emotionally real.`,
   theaterEntries: {}, // { charId: [{id,prompt,style,text,time}] }
   diaryCharFilter: 'all',   // 'all' | charId
   chatStats: {},    // {charId: {days: Set, messages: 0, startDate}}
+  // 各功能獨立模型設定（空字串代表使用全域模型）
+  modelChat: '',
+  modelSocial: '',
+  modelSocialComment: '',
+  modelDiary: '',
+  modelTheater: '',
+  modelMemory: '',
+  realMeetMode: false, // true = 現實見面模式（長篇回覆），false = LINE 聊天模式（短訊息）
 };
 
 // ─── INDEXEDDB ─────────────────────────────────────
@@ -159,8 +167,14 @@ async function loadAllData() {
   if (s.regexRules) state.regexRules = s.regexRules;
   if (s.realWorldEvents !== undefined) state.realWorldEvents = s.realWorldEvents;
   if (s.userBirthday) state.userBirthday = s.userBirthday;
-  if (s.autoMsgEnabled !== undefined) state.autoMsgEnabled = s.autoMsgEnabled;
-  if (s.autoMsgHours) state.autoMsgHours = s.autoMsgHours;
+  if (s.realMeetMode !== undefined) state.realMeetMode = s.realMeetMode;
+  // 各功能獨立模型
+  if (s.modelChat !== undefined) state.modelChat = s.modelChat || '';
+  if (s.modelSocial !== undefined) state.modelSocial = s.modelSocial || '';
+  if (s.modelSocialComment !== undefined) state.modelSocialComment = s.modelSocialComment || '';
+  if (s.modelDiary !== undefined) state.modelDiary = s.modelDiary || '';
+  if (s.modelTheater !== undefined) state.modelTheater = s.modelTheater || '';
+  if (s.modelMemory !== undefined) state.modelMemory = s.modelMemory || '';
 }
 
 async function saveSettings() {
@@ -172,8 +186,13 @@ async function saveSettings() {
     regexRules: state.regexRules,
     realWorldEvents: state.realWorldEvents,
     userBirthday: state.userBirthday,
-    autoMsgEnabled: state.autoMsgEnabled,
-    autoMsgHours: state.autoMsgHours,
+    realMeetMode: state.realMeetMode,
+    modelChat: state.modelChat,
+    modelSocial: state.modelSocial,
+    modelSocialComment: state.modelSocialComment,
+    modelDiary: state.modelDiary,
+    modelTheater: state.modelTheater,
+    modelMemory: state.modelMemory,
   });
 }
 
@@ -204,10 +223,68 @@ function enterApp() {
   initDiary();
   renderSocialFeed();
   checkRealWorldEvents();
-  startAutoMsgTimer();
   renderAnniversaryList();
   updateChatStatsCounts();
   checkAnniversaryReminders();
+  // Init real meet mode toggle
+  const rmBtn = document.getElementById('real-meet-toggle');
+  if (rmBtn) {
+    rmBtn.classList.toggle('on', !!state.realMeetMode);
+    rmBtn.textContent = state.realMeetMode ? '🌍 現實' : '📱 LINE';
+  }
+}
+
+// 取得各功能的有效模型（若未設定則 fallback 到全域模型）
+function getModel(feature) {
+  // feature: 'chat' | 'social' | 'socialComment' | 'diary' | 'theater' | 'memory'
+  const keyMap = {
+    chat: 'modelChat',
+    social: 'modelSocial',
+    socialComment: 'modelSocialComment',
+    diary: 'modelDiary',
+    theater: 'modelTheater',
+    memory: 'modelMemory',
+  };
+  const key = keyMap[feature] || ('model' + feature.charAt(0).toUpperCase() + feature.slice(1));
+  return state[key] || state.model;
+}
+
+// 儲存各功能模型設定
+function saveFeatureModels() {
+  const featMap = {
+    'chat': 'modelChat',
+    'social': 'modelSocial',
+    'socialcomment': 'modelSocialComment',
+    'diary': 'modelDiary',
+    'theater': 'modelTheater',
+    'memory': 'modelMemory',
+  };
+  Object.entries(featMap).forEach(([featId, stateKey]) => {
+    const el = document.getElementById('model-feat-' + featId);
+    if (el) state[stateKey] = el.value.trim();
+  });
+  saveSettings();
+  closeModal('model-features-modal');
+  showToast('✓ 各功能模型已儲存');
+}
+
+function openFeatureModelsModal() {
+  // 填入當前值 - 使用 HTML 中的小寫 id
+  const featMap = {
+    'chat': 'modelChat',
+    'social': 'modelSocial',
+    'socialcomment': 'modelSocialComment',
+    'diary': 'modelDiary',
+    'theater': 'modelTheater',
+    'memory': 'modelMemory',
+  };
+  Object.entries(featMap).forEach(([featId, stateKey]) => {
+    const el = document.getElementById('model-feat-' + featId);
+    if (el) el.value = state[stateKey] || '';
+    const hint = document.getElementById('model-feat-hint-' + featId);
+    if (hint) hint.textContent = '全域：' + (state.model || '未設定');
+  });
+  openModal('model-features-modal');
 }
 
 function modelShortName(m) {
@@ -762,39 +839,100 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
 
-  // 鎖定這次送出所屬的 chatId — 後續 async 期間即使切換角色也不混淆
-  const thisChatId   = state.activeChat;
-  const thisCharId   = state.activeCharId;
+  const thisChatId = state.activeChat;
+  const thisCharId = state.activeCharId;
 
   const imagesToSend = [...pendingChatImages];
   pendingChatImages = [];
   renderChatImgPreviewStrip();
+
+  // 若有正在等待中的 batch（同一個聊天室），累積進去並重設計時器
+  if (_batchTimer && _batchChatId === thisChatId) {
+    clearTimeout(_batchTimer);
+    if (text) _batchBuffer.push(text);
+    if (imagesToSend.length) _batchImages.push(...imagesToSend);
+    showBatchIndicator();
+    _batchTimer = setTimeout(flushBatch, BATCH_DELAY_MS);
+    return;
+  }
+
+  // 否則開始新的 batch
+  _batchChatId = thisChatId;
+  _batchCharId = thisCharId;
+  _batchBuffer = text ? [text] : [];
+  _batchImages = imagesToSend;
+
+  showBatchIndicator();
+  _batchTimer = setTimeout(flushBatch, BATCH_DELAY_MS);
+}
+
+function showBatchIndicator() {
+  // 顯示「等待合併」提示在輸入欄位旁
+  let ind = document.getElementById('batch-indicator');
+  if (!ind) {
+    ind = document.createElement('div');
+    ind.id = 'batch-indicator';
+    ind.style.cssText = 'position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(201,184,232,0.95);color:#3d3450;font-size:0.78rem;padding:0.35rem 1rem;border-radius:20px;z-index:500;pointer-events:none;backdrop-filter:blur(8px);white-space:nowrap;';
+    document.body.appendChild(ind);
+  }
+  const count = _batchBuffer.length + _batchImages.length;
+  ind.textContent = `⏳ 等待 ${(BATCH_DELAY_MS/1000).toFixed(1)}s 後送出（${count} 則）⋯ 可繼續輸入以合併`;
+  ind.style.display = 'block';
+  clearTimeout(ind._hideTimer);
+  ind._hideTimer = setTimeout(() => { if (ind) ind.style.display = 'none'; }, BATCH_DELAY_MS + 500);
+}
+
+
+
+// ─── MESSAGE BATCHING ────────────────────────────────
+// 分段傳送累積機制：按下送出後，等 pendingBatchDelay 毫秒若有再按送出則合併
+let _batchBuffer = [];           // 累積的訊息文字
+let _batchImages = [];           // 累積的圖片
+let _batchTimer = null;
+const BATCH_DELAY_MS = 2500;     // 2.5秒內再次按送出就合併
+let _batchChatId = null;
+let _batchCharId = null;
+
+async function flushBatch() {
+  clearTimeout(_batchTimer);
+  _batchTimer = null;
+
+  if (!_batchBuffer.length && !_batchImages.length) return;
+
+  const thisChatId = _batchChatId;
+  const thisCharId = _batchCharId;
+  const combinedText = _batchBuffer.join('\n').trim();
+  const imagesToSend = [..._batchImages];
+  _batchBuffer = [];
+  _batchImages = [];
+  _batchChatId = null;
+  _batchCharId = null;
 
   const chat = state.chats.find(c => c.id === thisChatId);
   if (!chat) return;
 
   if (imagesToSend.length > 0) {
     imagesToSend.forEach(img => {
-      const msg = { id: uid(), role: 'user', content: text || '（圖片）', type: 'image', imageUrl: img.dataUrl, time: Date.now() };
+      const msg = { id: uid(), role: 'user', content: combinedText || '（圖片）', type: 'image', imageUrl: img.dataUrl, time: Date.now() };
       chat.messages.push(msg);
     });
     dbPut('chats', chat);
     if (state.activeChat === thisChatId) renderMessages(thisChatId);
-  } else if (text) {
-    addUserMessage(thisChatId, text);
+  } else if (combinedText) {
+    addUserMessage(thisChatId, combinedText);
   }
 
   updateChatStats(thisCharId);
   if (state.activeChat === thisChatId) showTyping();
 
   try {
-    const responses = await callGemini(thisChatId, text || '（圖片）', null, imagesToSend);
+    const responses = await callGemini(thisChatId, combinedText || '（圖片）', null, imagesToSend);
     if (state.activeChat === thisChatId) hideTyping();
     for (let i = 0; i < responses.length; i++) {
       const msgLen = responses[i].length;
       const typingDelay = Math.min(300 + msgLen * 55, 2200) + Math.random() * 300;
       await delay(typingDelay);
-      addAIMessage(thisChatId, responses[i]);  // addAIMessage 自己也有 activeChat 檢查
+      addAIMessage(thisChatId, responses[i]);
       if (i < responses.length - 1) {
         if (state.activeChat === thisChatId) showTyping();
         await delay(350 + Math.random() * 250);
@@ -807,15 +945,34 @@ async function sendMessage() {
   }
 }
 
-// ─── GEMINI API ─────────────────────────────────────
+
 async function callGemini(chatId, userMessage, overrideSystem = null, userImages = []) {
   const chat = state.chats.find(c => c.id === chatId);
   const char = state.chars.find(c => c.id === chat.charId);
   const persona = char?.personaId ? state.personas.find(p => p.id === char.personaId) : null;
 
   // Build system prompt
+  let baseSystemPrompt = overrideSystem || state.systemPrompt;
+
+  // 若是現實見面模式，替換為不同的 system prompt
+  if (state.realMeetMode && !overrideSystem) {
+    baseSystemPrompt = baseSystemPrompt
+      .replace(/Reply ONLY in Traditional Chinese[\s\S]*?Be warm, casual, and emotionally real\./,
+        `Reply ONLY in Traditional Chinese.
+
+You are {{char}} talking with {{user}} in REAL LIFE (not via LINE).
+This is a face-to-face or real-world interaction, NOT a chat app.
+
+Response style:
+- Write longer, more natural and expressive responses (3-8 sentences is fine)
+- No need to split into multiple short messages
+- React to real-world scenarios, physical presence, atmosphere
+- Can include actions, expressions, descriptions in (括號)
+- Be warm, genuine, and present in the moment`);
+  }
+
   let systemParts = [
-    (overrideSystem || state.systemPrompt)
+    baseSystemPrompt
       .replace(/\{\{char\}\}/g, char?.name || 'AI')
       .replace(/\{\{user\}\}/g, persona?.name || 'user'),
   ];
@@ -877,7 +1034,7 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
     }
   };
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1128,7 +1285,7 @@ async function autoUpdateMemory(chatId) {
     const recent = chat.messages.slice(-12).map(m => `${m.role}: ${m.content}`).join('\n');
     const prompt = `From this conversation, extract important facts to remember (user preferences, shared experiences, plans, emotional moments). Return JSON array: [{"category":"喜好/回憶/計劃/情感", "text":"..."}]. Max 3 items. Only new info not already obvious.\n\nConversation:\n${recent}`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('memory')}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2321,7 +2478,7 @@ async function aiPostSocial() {
   if (!char) { showToast('請選擇角色'); return; }
 
   // Resolve model: use social override if set, else main state.model
-  const modelToUse = socialModelOverride || state.model;
+  const modelToUse = socialModelOverride || getModel('social');
 
   // Get persona bound to this char
   const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
@@ -2501,7 +2658,7 @@ async function allCharsReplyToPost(postId) {
       const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
 有人在社群平台發文：「${p2.content.slice(0,300)}」
 ${persona ? `你在和 ${persona.name} 說話。` : ''}請用繁體中文寫一則自然留言（1-2句），語氣符合個性。只輸出留言內容。`;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('socialComment')}:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
       });
@@ -2536,7 +2693,7 @@ async function aiReplyToComment(postId, userComment) {
 貼文：「${p2.content.slice(0,300)}」
 ${persona ? `你在和 ${persona.name} 說話。` : ''}有人留言：「${userComment}」
 請用繁體中文回應（1-2句），語氣符合個性。只輸出回覆內容。`;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${state.apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('socialComment')}:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
       });
@@ -2819,7 +2976,7 @@ ${anniversaryContext ? `${anniversaryContext}\n` : ''}
 - 自然分段，有情緒起伏
 - 結尾要有餘韻，不要突然截斷`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:streamGenerateContent?alt=sse&key=${state.apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('diary')}:streamGenerateContent?alt=sse&key=${state.apiKey}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3125,10 +3282,11 @@ async function checkRealWorldEvents() {
   const today = new Date();
   const month = today.getMonth() + 1;
   const day   = today.getDate();
-  const hour  = today.getHours();
 
-  // Trigger window: 8am, 10am, 12pm
-  if (hour !== 8 && hour !== 10 && hour !== 12) return;
+  // 只要今天還沒送過，就觸發（不再限制8/10/12時）
+  const todayKey = today.toDateString();
+  const stored = localStorage.getItem('erh_holiday_' + todayKey);
+  if (stored) return; // 今天已送過
 
   // 生日優先
   if (state.userBirthday) {
@@ -3149,9 +3307,10 @@ async function checkRealWorldEvents() {
 
 async function triggerHolidayMessage(hint, holidayName) {
   if (!state.activeChat || !state.activeCharId) return;
-  const stored = localStorage.getItem('erh_holiday_' + new Date().toDateString());
+  const todayKey = new Date().toDateString();
+  const stored = localStorage.getItem('erh_holiday_' + todayKey);
   if (stored) return;
-  localStorage.setItem('erh_holiday_' + new Date().toDateString(), '1');
+  localStorage.setItem('erh_holiday_' + todayKey, '1');
 
   const char = state.chars.find(c => c.id === state.activeCharId);
   if (!char) return;
@@ -3164,7 +3323,7 @@ ${persona ? `你正在和 ${persona.name} 說話。${persona.desc ? persona.desc
 今天是【${holidayName}】。
 請以你的個性，用繁體中文，傳一則簡短自然的節日訊息給對方（1-3句，像 LINE 訊息的語感），可以帶一點撒嬌或情感，符合節日氛圍。只輸出訊息本身。`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:generateContent?key=${state.apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3244,6 +3403,24 @@ function openApiSettings() {
   }
   openModal('model-settings-modal');
 }
+
+function toggleRealMeetMode() {
+  state.realMeetMode = !state.realMeetMode;
+  const btn = document.getElementById('real-meet-toggle');
+  if (btn) {
+    btn.classList.toggle('on', state.realMeetMode);
+    btn.textContent = state.realMeetMode ? '🌍 現實' : '📱 LINE';
+    btn.title = state.realMeetMode ? '現實見面模式（點擊切換至 LINE 模式）' : 'LINE 聊天模式（點擊切換至現實模式）';
+  }
+  // 更新輸入欄位提示
+  const msgInput = document.getElementById('msg-input');
+  if (msgInput) {
+    msgInput.placeholder = state.realMeetMode ? '描述現實中發生的事...' : '傳訊息...';
+  }
+  saveSettings();
+  showToast(state.realMeetMode ? '🌍 現實見面模式 ON — 回覆將更長、更自然' : '📱 LINE 聊天模式 ON — 短訊息風格');
+}
+
 
 function toggleRealWorldEvents() {
   state.realWorldEvents = !state.realWorldEvents;
@@ -3546,10 +3723,8 @@ function autoResize(el) {
 }
 
 function handleInputKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
-    e.preventDefault();
-    sendMessage();
-  }
+  // Enter 鍵不再自動送出，請使用介面上的送出按鈕
+  autoResize(e.target);
 }
 
 function previewImage(url) {
@@ -3918,7 +4093,7 @@ ${styleMap[style] || '自由發揮，符合角色個性即可。'}
 - 直接輸出故事內容，不加任何標題或說明`;
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${state.model}:streamGenerateContent?alt=sse&key=${state.apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('theater')}:streamGenerateContent?alt=sse&key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4119,10 +4294,4 @@ function checkAnniversaryReminders() {
   // Real world toggle init
   const toggle = document.getElementById('realworld-toggle');
   if (toggle) toggle.classList.toggle('on', !!state.realWorldEvents);
-
-  // AutoMsg toggle init
-  const autoToggle = document.getElementById('automsg-toggle');
-  if (autoToggle) autoToggle.classList.toggle('on', !!state.autoMsgEnabled);
-  const autoHoursInput = document.getElementById('automsg-hours-input');
-  if (autoHoursInput) autoHoursInput.value = state.autoMsgHours || 3;
 })();

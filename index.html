@@ -1655,8 +1655,7 @@ body {
           <div class="header-status" id="header-status">— 點擊角色開始聊天 —</div>
         </div>
         <div class="header-actions">
-          <button class="header-btn" onclick="toggleMemoryPanel()" title="記憶">🧠</button>
-          <button class="header-btn" onclick="openModal('char-info-modal')" title="角色資訊">👤</button>
+          <button class="header-btn" id="real-meet-toggle" onclick="toggleRealMeetMode()" title="LINE 聊天模式（點擊切換至現實模式）" style="font-size:0.72rem;padding:0.25rem 0.5rem;border-radius:8px;font-family:inherit;background:rgba(201,184,232,0.15);border:1px solid rgba(201,184,232,0.3);color:var(--text-mid);cursor:pointer;white-space:nowrap;">📱 LINE</button>
           <button class="header-btn" onclick="openChatOptions()" title="更多">⋯</button>
         </div>
       </div>
@@ -1680,7 +1679,6 @@ body {
           <button class="toolbar-btn" onclick="openStickerPicker()" title="(表情)">🎭</button>
           <button class="toolbar-btn" onclick="openModal('preset-modal')" title="Preset">📋</button>
           <button class="toolbar-btn" id="memory-toggle-btn" onclick="toggleMemoryPanel()" title="記憶">🧠</button>
-          <button class="toolbar-btn" onclick="triggerAutoMsgNow()" title="讓角色立刻傳訊息" style="margin-left:auto;">💬✨</button>
         </div>
         <!-- Image preview strip -->
         <div id="chat-img-preview-strip" style="display:none;padding:0.4rem 0;display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;"></div>
@@ -1795,8 +1793,14 @@ body {
         </div>
         <div class="settings-item" onclick="openModal('model-settings-modal')">
           <div class="settings-item-icon" style="background:var(--milk-blue-soft)">🤖</div>
-          <div class="settings-item-label">模型選擇</div>
+          <div class="settings-item-label">全域模型設定</div>
           <div class="settings-item-value" id="current-model-display"></div>
+          <div class="settings-item-arrow">›</div>
+        </div>
+        <div class="settings-item" onclick="openFeatureModelsModal()">
+          <div class="settings-item-icon" style="background:var(--lavender-soft)">🎛️</div>
+          <div class="settings-item-label">各功能獨立模型</div>
+          <div class="settings-item-value" style="font-size:0.72rem;">聊天/社群/日記/劇場…</div>
           <div class="settings-item-arrow">›</div>
         </div>
       </div>
@@ -1821,27 +1825,6 @@ body {
         </div>
       </div>
       
-      <div class="settings-section">
-        <div class="settings-section-title">角色自動傳訊</div>
-        <div class="settings-item">
-          <div class="settings-item-icon" style="background:var(--lavender-soft)">💬</div>
-          <div class="settings-item-label">超時自動傳訊</div>
-          <div class="toggle-switch" id="automsg-toggle" onclick="toggleAutoMsg()"></div>
-        </div>
-        <div class="settings-item" style="cursor:default;">
-          <div class="settings-item-icon" style="background:var(--milk-blue-soft)">⏱️</div>
-          <div class="settings-item-label">無回覆幾小時後自動發</div>
-          <input type="number" id="automsg-hours-input" min="1" max="24" value="3"
-            onchange="saveAutoMsgHours()"
-            style="width:56px;border:1.5px solid var(--lavender-light);border-radius:8px;padding:0.3rem 0.5rem;font-family:inherit;font-size:0.85rem;color:var(--text-dark);background:var(--lavender-soft);text-align:center;outline:none;">
-          <span style="font-size:0.78rem;color:var(--text-light);">小時</span>
-        </div>
-        <div class="settings-item" onclick="triggerAutoMsgNow()" style="cursor:pointer;">
-          <div class="settings-item-icon" style="background:#f0fff0">📨</div>
-          <div class="settings-item-label">立即讓角色傳一則訊息</div>
-          <div class="settings-item-arrow">›</div>
-        </div>
-      </div>
 
       <div class="settings-section">
         <div class="settings-section-title">現實連動</div>
@@ -2172,6 +2155,60 @@ body {
     <div class="modal-actions">
       <button class="modal-btn secondary" onclick="closeModal('model-settings-modal')">取消</button>
       <button class="modal-btn primary" onclick="saveModelSettings()">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURE MODELS MODAL -->
+<div class="modal-overlay" id="model-features-modal">
+  <div class="modal" style="width:min(520px,96vw);max-height:85vh;overflow-y:auto;">
+    <div class="modal-title">🎛️ 各功能獨立模型設定</div>
+    <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:1rem;">空白 = 使用全域模型。可輸入任意 Gemini 模型 ID。</div>
+    
+    <div class="modal-field">
+      <label class="modal-label">💬 一般聊天（Chat）</label>
+      <input class="modal-input" type="text" id="model-feat-chat" placeholder="空白=使用全域模型" list="feat-model-list">
+      <div class="modal-label" id="model-feat-hint-chat" style="margin-top:0.2rem;"></div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">🌊 社群貼文（Social Post）</label>
+      <input class="modal-input" type="text" id="model-feat-social" placeholder="空白=使用全域模型" list="feat-model-list">
+      <div class="modal-label" id="model-feat-hint-social" style="margin-top:0.2rem;"></div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">💬 社群留言回覆（Comment）</label>
+      <input class="modal-input" type="text" id="model-feat-socialcomment" placeholder="空白=使用全域模型" list="feat-model-list">
+      <div class="modal-label" id="model-feat-hint-socialcomment" style="margin-top:0.2rem;"></div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">📔 日記生成（Diary）</label>
+      <input class="modal-input" type="text" id="model-feat-diary" placeholder="空白=使用全域模型" list="feat-model-list">
+      <div class="modal-label" id="model-feat-hint-diary" style="margin-top:0.2rem;"></div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">🎭 小劇場（Theater）</label>
+      <input class="modal-input" type="text" id="model-feat-theater" placeholder="空白=使用全域模型" list="feat-model-list">
+      <div class="modal-label" id="model-feat-hint-theater" style="margin-top:0.2rem;"></div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">🧠 長期記憶提取（Memory）</label>
+      <input class="modal-input" type="text" id="model-feat-memory" placeholder="空白=使用全域模型" list="feat-model-list">
+      <div class="modal-label" id="model-feat-hint-memory" style="margin-top:0.2rem;"></div>
+    </div>
+
+    <datalist id="feat-model-list">
+      <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+      <option value="gemini-3-pro-preview">Gemini 3 Pro Preview</option>
+      <option value="gemini-3-flash-exp">Gemini 3 Flash Exp</option>
+      <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+      <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash Exp</option>
+      <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+      <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+    </datalist>
+
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="closeModal('model-features-modal')">取消</button>
+      <button class="modal-btn primary" onclick="saveFeatureModels()">儲存</button>
     </div>
   </div>
 </div>

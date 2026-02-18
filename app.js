@@ -11,6 +11,7 @@ let state = {
   temperature: 1.0,
   maxTokens: 2048,
   contextMsgs: 30,  // 送出給 AI 的歷史訊息數量上限
+  swipeDelete: false, // true = 左滑刪除, false = 側邊 × 按鈕
   chars: [],        // [{id, name, avatar, desc, firstMsg, personaId}]
   chats: [],        // [{id, charId, title, messages:[]}]
   personas: [],     // [{id, name, desc}]
@@ -168,6 +169,7 @@ async function loadAllData() {
   if (s.realWorldEvents !== undefined) state.realWorldEvents = s.realWorldEvents;
   if (s.userBirthday) state.userBirthday = s.userBirthday;
   if (s.contextMsgs) state.contextMsgs = s.contextMsgs;
+  if (s.swipeDelete !== undefined) state.swipeDelete = s.swipeDelete;
   // 各功能獨立模型
   if (s.modelChat !== undefined) state.modelChat = s.modelChat || '';
   if (s.modelSocial !== undefined) state.modelSocial = s.modelSocial || '';
@@ -187,6 +189,7 @@ async function saveSettings() {
     realWorldEvents: state.realWorldEvents,
     userBirthday: state.userBirthday,
     contextMsgs: state.contextMsgs,
+    swipeDelete: state.swipeDelete,
     modelChat: state.modelChat,
     modelSocial: state.modelSocial,
     modelSocialComment: state.modelSocialComment,
@@ -226,6 +229,11 @@ function enterApp() {
   renderAnniversaryList();
   updateChatStatsCounts();
   checkAnniversaryReminders();
+  // 初始化設定頁 toggle 狀態
+  const sdt = document.getElementById('swipe-delete-toggle');
+  if (sdt) sdt.classList.toggle('on', !!state.swipeDelete);
+  const rwt = document.getElementById('realworld-toggle');
+  if (rwt) rwt.classList.toggle('on', !!state.realWorldEvents);
 }
 
 // 取得各功能的有效模型（若未設定則 fallback 到全域模型）
@@ -617,7 +625,7 @@ function openChat(chatId) {
 }
 
 // ─── MESSAGES ───────────────────────────────────────
-function renderMessages(chatId) {
+function renderMessages(chatId, opts = {}) {
   const chat = state.chats.find(c => c.id === chatId);
   if (!chat) return;
   const area = document.getElementById('messages-area');
@@ -690,19 +698,92 @@ function renderMessages(chatId) {
         <button class="msg-action-btn danger" onclick="deleteMsgDirect('${msg.id}')" title="刪除">🗑️</button>
       </div>`;
 
-      // 小刪除鍵（mobile 友善，始終可見）
-      const delBtnHtml = `<button class="msg-del-btn" onclick="deleteMsgDirect('${msg.id}')" title="刪除">×</button>`;
+      if (state.swipeDelete) {
+        // ── 滑動刪除模式：不顯示 × 按鈕，左滑氣泡露出刪除區 ──
+        // 用 wrapper 包住 row 本體，後面放一個紅色刪除底層
+        row.style.cssText += 'overflow:visible;';
+        if (isUser) {
+          row.innerHTML = `${actionsHtml}${timeEl}${bubbleContent}`;
+        } else {
+          row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}${actionsHtml}`;
+        }
 
-      if (isUser) {
-        row.innerHTML = `${delBtnHtml}${actionsHtml}${timeEl}${bubbleContent}`;
+        // 建立 swipe wrapper
+        const wrapper = document.createElement('div');
+        wrapper.className = 'swipe-wrapper';
+        wrapper.style.cssText = 'position:relative;overflow:hidden;border-radius:12px;';
+
+        // 刪除底層（露出時可見）
+        const delLayer = document.createElement('div');
+        delLayer.className = 'swipe-del-layer';
+        delLayer.innerHTML = `<span style="font-size:1.2rem">🗑️</span><span style="font-size:0.72rem;margin-top:2px;">刪除</span>`;
+        delLayer.style.cssText = `
+          position:absolute; top:0; right:0; bottom:0; width:70px;
+          background:linear-gradient(135deg,#e87878,#d04040);
+          display:flex; flex-direction:column; align-items:center; justify-content:center;
+          color:white; border-radius:12px; pointer-events:none;
+          opacity:0; transition:opacity 0.1s;
+        `;
+
+        // 把 row 移進 wrapper
+        wrapper.appendChild(delLayer);
+        wrapper.appendChild(row);
+        groupEl.appendChild(wrapper);
+
+        // 滑動邏輯：只對 row 做 translateX，不影響 messages-area
+        let swStartX = 0, swStartY = 0, swTracking = false, swOffset = 0;
+        const MAX_SWIPE = 75;
+        const TRIGGER = 55;
+
+        row.addEventListener('touchstart', e => {
+          swStartX = e.touches[0].clientX;
+          swStartY = e.touches[0].clientY;
+          swTracking = true;
+          row.style.transition = 'none';
+        }, { passive: true });
+
+        row.addEventListener('touchmove', e => {
+          if (!swTracking) return;
+          const dx = e.touches[0].clientX - swStartX;
+          const dy = e.touches[0].clientY - swStartY;
+          if (Math.abs(dy) > Math.abs(dx) + 8) { swTracking = false; return; }
+          // 阻止 messages-area 水平移動，只動 row 本身
+          if (Math.abs(dx) > 5) e.stopPropagation();
+          const shift = Math.max(-MAX_SWIPE, Math.min(0, dx));
+          swOffset = shift;
+          row.style.transform = `translateX(${shift}px)`;
+          delLayer.style.opacity = Math.min(1, Math.abs(shift) / TRIGGER).toString();
+        }, { passive: true });
+
+        row.addEventListener('touchend', e => {
+          if (!swTracking) return;
+          swTracking = false;
+          row.style.transition = 'transform 0.2s ease';
+          if (swOffset <= -TRIGGER) {
+            // 確認刪除
+            row.style.transform = `translateX(-100%)`;
+            delLayer.style.opacity = '0';
+            setTimeout(() => deleteMsgSilent(msg.id), 180);
+          } else {
+            row.style.transform = 'translateX(0)';
+            delLayer.style.opacity = '0';
+          }
+          swOffset = 0;
+        });
+
       } else {
-        row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}${actionsHtml}${delBtnHtml}`;
+        // ── × 按鈕模式 ──
+        const delBtnHtml = `<button class="msg-del-btn" onclick="deleteMsgDirect('${msg.id}')" title="刪除">×</button>`;
+        if (isUser) {
+          row.innerHTML = `${delBtnHtml}${actionsHtml}${timeEl}${bubbleContent}`;
+        } else {
+          row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}${actionsHtml}${delBtnHtml}`;
+        }
+        groupEl.appendChild(row);
       }
 
       // Desktop: right-click context menu
       row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
-
-      groupEl.appendChild(row);
     });
 
     area.appendChild(groupEl);
@@ -711,7 +792,11 @@ function renderMessages(chatId) {
   // Typing indicator placeholder
   area.innerHTML += `<div id="typing-indicator" style="display:none;"><div class="msg-group ai"><div class="msg-row"><div class="msg-avatar">${(() => { const c = state.chars.find(c=>c.id===state.activeCharId); const av = c?.avatar; return isImgSrc(av) ? `<img src="${av}">` : (av||'🌸'); })()}</div><div class="msg-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div></div></div></div>`;
 
-  scrollToBottom();
+  if (opts.preserveScroll && opts.scrollTop != null) {
+    area.scrollTop = opts.scrollTop;
+  } else {
+    scrollToBottom();
+  }
 }
 
 function showMobileActionBar(msgId, isUser) {
@@ -3463,6 +3548,15 @@ function openApiSettings() {
 }
 
 
+function toggleSwipeDelete() {
+  state.swipeDelete = !state.swipeDelete;
+  const toggle = document.getElementById('swipe-delete-toggle');
+  if (toggle) toggle.classList.toggle('on', state.swipeDelete);
+  saveSettings();
+  if (state.activeChat) renderMessages(state.activeChat, { preserveScroll: true, scrollTop: document.getElementById('messages-area')?.scrollTop });
+  showToast(state.swipeDelete ? '👈 左滑刪除模式 ON' : '× 按鈕模式 ON');
+}
+
 function toggleRealWorldEvents() {
   state.realWorldEvents = !state.realWorldEvents;
   const toggle = document.getElementById('realworld-toggle');
@@ -3489,13 +3583,25 @@ function copyMsg(msgId) {
   if (msg) navigator.clipboard.writeText(msg.content).then(() => showToast('✓ 已複製'));
 }
 
+function deleteMsgSilent(msgId) {
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  const area = document.getElementById('messages-area');
+  const scrollPos = area ? area.scrollTop : null;
+  chat.messages = chat.messages.filter(m => m.id !== msgId);
+  dbPut('chats', chat);
+  renderMessages(state.activeChat, { preserveScroll: true, scrollTop: scrollPos });
+}
+
 function deleteMsgDirect(msgId) {
   if (!confirm('確認刪除這則訊息？')) return;
   const chat = state.chats.find(c => c.id === state.activeChat);
   if (!chat) return;
+  const area = document.getElementById('messages-area');
+  const scrollPos = area ? area.scrollTop : null;
   chat.messages = chat.messages.filter(m => m.id !== msgId);
   dbPut('chats', chat);
-  renderMessages(state.activeChat);
+  renderMessages(state.activeChat, { preserveScroll: true, scrollTop: scrollPos });
 }
 
 function ctxRegenFromMsg(msgId) {

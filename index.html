@@ -424,6 +424,11 @@ body {
   40% { transform: scale(1); opacity: 1; }
 }
 
+@keyframes slideDown {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
 /* ─── IMAGE GEN MODAL ─── */
 .imagegen-type-btn, .imagegen-style-btn {
   border: 2px solid rgba(201,184,232,0.25);
@@ -2149,8 +2154,13 @@ body {
       <span id="temp-val" style="font-size:0.8rem;color:var(--text-light)">1.0</span>
     </div>
     <div class="modal-field">
-      <label class="modal-label">Max Output Tokens</label>
-      <input class="modal-input" type="number" id="max-tokens-input" value="2048" min="100" max="8192">
+      <label class="modal-label">Max Output Tokens <span style="font-size:0.7rem;color:var(--text-light);">（每次回覆最多輸出幾個 token）</span></label>
+      <input class="modal-input" type="number" id="max-tokens-input" value="2048" min="100" max="65536">
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">上下文訊息數量 <span style="font-size:0.7rem;color:var(--text-light);">（送出幾則歷史訊息作為上下文，越大越耗 token）</span></label>
+      <input class="modal-input" type="number" id="context-msgs-input" value="30" min="1" max="200">
+      <div style="font-size:0.72rem;color:var(--text-light);margin-top:0.35rem;">建議值：10～50 則。調小可節省 token 用量，調大可讓 AI 記得更久遠的對話。</div>
     </div>
     <div class="modal-actions">
       <button class="modal-btn secondary" onclick="closeModal('model-settings-modal')">取消</button>

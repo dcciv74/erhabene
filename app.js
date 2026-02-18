@@ -10,6 +10,7 @@ let state = {
   model: 'gemini-3-flash-preview',
   temperature: 1.0,
   maxTokens: 2048,
+  contextMsgs: 30,  // 送出給 AI 的歷史訊息數量上限
   chars: [],        // [{id, name, avatar, desc, firstMsg, personaId}]
   chats: [],        // [{id, charId, title, messages:[]}]
   personas: [],     // [{id, name, desc}]
@@ -166,6 +167,7 @@ async function loadAllData() {
   if (s.regexRules) state.regexRules = s.regexRules;
   if (s.realWorldEvents !== undefined) state.realWorldEvents = s.realWorldEvents;
   if (s.userBirthday) state.userBirthday = s.userBirthday;
+  if (s.contextMsgs) state.contextMsgs = s.contextMsgs;
   // 各功能獨立模型
   if (s.modelChat !== undefined) state.modelChat = s.modelChat || '';
   if (s.modelSocial !== undefined) state.modelSocial = s.modelSocial || '';
@@ -184,6 +186,7 @@ async function saveSettings() {
     regexRules: state.regexRules,
     realWorldEvents: state.realWorldEvents,
     userBirthday: state.userBirthday,
+    contextMsgs: state.contextMsgs,
     modelChat: state.modelChat,
     modelSocial: state.modelSocial,
     modelSocialComment: state.modelSocialComment,
@@ -696,49 +699,24 @@ function renderMessages(chatId) {
       // Desktop: right-click context menu
       row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
 
-      // Mobile: 向左滑動氣泡 → 顯示操作按鈕（避開 iOS 文字選取衝突）
-      let _swStartX = 0, _swStartY = 0, _swTracking = false;
-      const SWIPE_THRESHOLD = 40; // 需要滑動超過 40px 才觸發
-
+      // Mobile: 單次點擊氣泡 → 在畫面頂端顯示浮動操作列
+      // 用 touchend 判斷（不干擾文字選取、捲動）
+      let _tapStartX = 0, _tapStartY = 0;
       row.addEventListener('touchstart', e => {
-        _swStartX = e.touches[0].clientX;
-        _swStartY = e.touches[0].clientY;
-        _swTracking = true;
-      }, { passive: true });
-
-      row.addEventListener('touchmove', e => {
-        if (!_swTracking) return;
-        const dx = e.touches[0].clientX - _swStartX;
-        const dy = e.touches[0].clientY - _swStartY;
-        // 若垂直滑動大於水平，視為捲動，取消追蹤
-        if (Math.abs(dy) > Math.abs(dx) + 5) {
-          _swTracking = false;
-        }
+        _tapStartX = e.touches[0].clientX;
+        _tapStartY = e.touches[0].clientY;
       }, { passive: true });
 
       row.addEventListener('touchend', e => {
-        if (!_swTracking) return;
-        _swTracking = false;
-        const dx = e.changedTouches[0].clientX - _swStartX;
-        const dy = e.changedTouches[0].clientY - _swStartY;
-        // 只有水平滑動 > 40px 且垂直偏移小才觸發
-        if (Math.abs(dx) >= SWIPE_THRESHOLD && Math.abs(dy) < 30) {
-          // 隱藏其他已開啟的
-          document.querySelectorAll('.msg-actions.mobile-show')
-            .forEach(el => el.classList.remove('mobile-show'));
-          const actions = row.querySelector('.msg-actions');
-          if (actions) {
-            actions.classList.add('mobile-show');
-            if (navigator.vibrate) navigator.vibrate(30);
-            // 點其他地方收起
-            const dismiss = ev => {
-              if (!row.contains(ev.target)) {
-                actions.classList.remove('mobile-show');
-                document.removeEventListener('touchstart', dismiss, true);
-              }
-            };
-            setTimeout(() => document.addEventListener('touchstart', dismiss, true), 80);
-          }
+        const dx = Math.abs(e.changedTouches[0].clientX - _tapStartX);
+        const dy = Math.abs(e.changedTouches[0].clientY - _tapStartY);
+        // 手指幾乎沒移動（tap，非捲動、非選取）才觸發
+        if (dx < 8 && dy < 8) {
+          // 如果有文字被選取，不要觸發（讓使用者正常複製）
+          const sel = window.getSelection();
+          if (sel && sel.toString().length > 0) return;
+          e.preventDefault();
+          showMobileActionBar(msg.id, isUser);
         }
       });
 
@@ -752,6 +730,66 @@ function renderMessages(chatId) {
   area.innerHTML += `<div id="typing-indicator" style="display:none;"><div class="msg-group ai"><div class="msg-row"><div class="msg-avatar">${(() => { const c = state.chars.find(c=>c.id===state.activeCharId); const av = c?.avatar; return isImgSrc(av) ? `<img src="${av}">` : (av||'🌸'); })()}</div><div class="msg-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div></div></div></div>`;
 
   scrollToBottom();
+}
+
+function showMobileActionBar(msgId, isUser) {
+  // 移除已有的浮動列
+  document.getElementById('mobile-action-bar')?.remove();
+
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const msg = chat?.messages.find(m => m.id === msgId);
+  if (!msg) return;
+
+  const bar = document.createElement('div');
+  bar.id = 'mobile-action-bar';
+  bar.style.cssText = `
+    position: fixed; top: 0; left: 0; right: 0;
+    background: rgba(255,255,255,0.97);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(201,184,232,0.3);
+    display: flex; align-items: center; justify-content: center;
+    gap: 0.3rem; padding: 0.55rem 1rem;
+    z-index: 9000;
+    box-shadow: 0 2px 16px rgba(180,160,210,0.2);
+    animation: slideDown 0.18s ease;
+  `;
+
+  const actions = [
+    { icon: '✏️', label: '編輯', fn: () => { startInlineEdit(msgId); bar.remove(); } },
+    { icon: '📋', label: '複製', fn: () => { copyMsg(msgId); bar.remove(); } },
+    ...(!isUser ? [{ icon: '🔄', label: '重生成', fn: () => { ctxRegenFromMsg(msgId); bar.remove(); } }] : []),
+    { icon: '🗑️', label: '刪除', danger: true, fn: () => { bar.remove(); deleteMsgDirect(msgId); } },
+    { icon: '✕', label: '關閉', fn: () => bar.remove() },
+  ];
+
+  actions.forEach(a => {
+    const btn = document.createElement('button');
+    btn.style.cssText = `
+      display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
+      background: ${a.danger ? 'rgba(232,120,120,0.1)' : 'var(--lavender-soft)'};
+      border: 1px solid ${a.danger ? 'rgba(232,120,120,0.25)' : 'rgba(201,184,232,0.25)'};
+      border-radius: 10px; padding: 0.35rem 0.6rem;
+      font-family: inherit; cursor: pointer;
+      color: ${a.danger ? '#e87878' : 'var(--text-mid)'};
+    `;
+    btn.innerHTML = `<span style="font-size:1.1rem">${a.icon}</span><span style="font-size:0.62rem">${a.label}</span>`;
+    btn.addEventListener('touchend', e => { e.preventDefault(); a.fn(); });
+    bar.appendChild(btn);
+  });
+
+  document.body.appendChild(bar);
+  if (navigator.vibrate) navigator.vibrate(25);
+
+  // 點 bar 以外收起
+  setTimeout(() => {
+    const dismiss = e => {
+      if (!bar.contains(e.target)) {
+        bar.remove();
+        document.removeEventListener('touchstart', dismiss, true);
+      }
+    };
+    document.addEventListener('touchstart', dismiss, true);
+  }, 100);
 }
 
 function addAIMessage(chatId, content, type = 'text', imageUrl = null) {
@@ -1032,7 +1070,7 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
   const systemInstruction = systemParts.join('');
 
   // Build conversation history (last 30 messages)
-  const history = chat.messages.slice(-30).map(m => ({
+  const history = chat.messages.slice(-state.contextMsgs).map(m => ({
     role: m.role === 'user' ? 'user' : 'model',
     parts: [{ text: m.content }]
   }));
@@ -3400,12 +3438,12 @@ function savePreset() {
 
 function saveModelSettings() {
   const key = document.getElementById('api-key-update').value.trim();
-  // 優先用自訂輸入，否則用下拉
   const customModel = document.getElementById('model-custom-input')?.value?.trim();
   const selectModel = document.getElementById('model-update-select')?.value;
   const model = customModel || selectModel || state.model;
   const temp = parseFloat(document.getElementById('temp-slider').value);
   const maxTok = parseInt(document.getElementById('max-tokens-input').value);
+  const ctxMsgs = parseInt(document.getElementById('context-msgs-input')?.value) || 30;
 
   if (key) {
     state.apiKey = key;
@@ -3415,23 +3453,30 @@ function saveModelSettings() {
   state.model = model;
   state.temperature = temp;
   state.maxTokens = maxTok;
+  state.contextMsgs = Math.max(1, Math.min(200, ctxMsgs));
   localStorage.setItem('erh_model', model);
   document.getElementById('current-model-display').textContent = modelShortName(model);
+  saveSettings();
   closeModal('model-settings-modal');
   showToast('✓ 設定已儲存，模型：' + modelShortName(model));
 }
 
 function openApiSettings() {
   document.getElementById('api-key-update').value = state.apiKey;
-  // 顯示當前模型到自訂欄位
   const customInput = document.getElementById('model-custom-input');
   if (customInput) customInput.value = state.model;
-  // 嘗試同步下拉選單
   const sel = document.getElementById('model-update-select');
   if (sel) {
     const opt = sel.querySelector(`option[value="${state.model}"]`);
     if (opt) sel.value = state.model;
   }
+  // 填入 token 參數
+  const tempSlider = document.getElementById('temp-slider');
+  if (tempSlider) { tempSlider.value = state.temperature; document.getElementById('temp-val').textContent = state.temperature; }
+  const maxTokInput = document.getElementById('max-tokens-input');
+  if (maxTokInput) maxTokInput.value = state.maxTokens;
+  const ctxInput = document.getElementById('context-msgs-input');
+  if (ctxInput) ctxInput.value = state.contextMsgs || 30;
   openModal('model-settings-modal');
 }
 

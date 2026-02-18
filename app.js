@@ -681,7 +681,7 @@ function renderMessages(chatId) {
       const timeEl = idx === group.messages.length - 1
         ? `<div class="msg-time">${formatTime(msg.time)}</div>` : '';
 
-      // Hover action buttons
+      // Hover action buttons (desktop)
       const isUser = group.role === 'user';
       const actionsHtml = `<div class="msg-actions ${isUser ? 'msg-actions-left' : 'msg-actions-right'}">
         <button class="msg-action-btn" onclick="startInlineEdit('${msg.id}')" title="編輯">✏️</button>
@@ -690,35 +690,17 @@ function renderMessages(chatId) {
         <button class="msg-action-btn danger" onclick="deleteMsgDirect('${msg.id}')" title="刪除">🗑️</button>
       </div>`;
 
+      // 小刪除鍵（mobile 友善，始終可見）
+      const delBtnHtml = `<button class="msg-del-btn" onclick="deleteMsgDirect('${msg.id}')" title="刪除">×</button>`;
+
       if (isUser) {
-        row.innerHTML = `${actionsHtml}${timeEl}${bubbleContent}`;
+        row.innerHTML = `${delBtnHtml}${actionsHtml}${timeEl}${bubbleContent}`;
       } else {
-        row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}${actionsHtml}`;
+        row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}${actionsHtml}${delBtnHtml}`;
       }
 
       // Desktop: right-click context menu
       row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
-
-      // Mobile: 單次點擊氣泡 → 在畫面頂端顯示浮動操作列
-      // 用 touchend 判斷（不干擾文字選取、捲動）
-      let _tapStartX = 0, _tapStartY = 0;
-      row.addEventListener('touchstart', e => {
-        _tapStartX = e.touches[0].clientX;
-        _tapStartY = e.touches[0].clientY;
-      }, { passive: true });
-
-      row.addEventListener('touchend', e => {
-        const dx = Math.abs(e.changedTouches[0].clientX - _tapStartX);
-        const dy = Math.abs(e.changedTouches[0].clientY - _tapStartY);
-        // 手指幾乎沒移動（tap，非捲動、非選取）才觸發
-        if (dx < 8 && dy < 8) {
-          // 如果有文字被選取，不要觸發（讓使用者正常複製）
-          const sel = window.getSelection();
-          if (sel && sel.toString().length > 0) return;
-          e.preventDefault();
-          showMobileActionBar(msg.id, isUser);
-        }
-      });
 
       groupEl.appendChild(row);
     });

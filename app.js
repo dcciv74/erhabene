@@ -61,7 +61,6 @@ Stay in character. Be warm, casual, and emotionally real.`,
   modelDiary: '',
   modelTheater: '',
   modelMemory: '',
-  realMeetMode: false, // true = 現實見面模式（長篇回覆），false = LINE 聊天模式（短訊息）
 };
 
 // ─── INDEXEDDB ─────────────────────────────────────
@@ -167,7 +166,6 @@ async function loadAllData() {
   if (s.regexRules) state.regexRules = s.regexRules;
   if (s.realWorldEvents !== undefined) state.realWorldEvents = s.realWorldEvents;
   if (s.userBirthday) state.userBirthday = s.userBirthday;
-  if (s.realMeetMode !== undefined) state.realMeetMode = s.realMeetMode;
   // 各功能獨立模型
   if (s.modelChat !== undefined) state.modelChat = s.modelChat || '';
   if (s.modelSocial !== undefined) state.modelSocial = s.modelSocial || '';
@@ -186,7 +184,6 @@ async function saveSettings() {
     regexRules: state.regexRules,
     realWorldEvents: state.realWorldEvents,
     userBirthday: state.userBirthday,
-    realMeetMode: state.realMeetMode,
     modelChat: state.modelChat,
     modelSocial: state.modelSocial,
     modelSocialComment: state.modelSocialComment,
@@ -226,12 +223,6 @@ function enterApp() {
   renderAnniversaryList();
   updateChatStatsCounts();
   checkAnniversaryReminders();
-  // Init real meet mode toggle
-  const rmBtn = document.getElementById('real-meet-toggle');
-  if (rmBtn) {
-    rmBtn.classList.toggle('on', !!state.realMeetMode);
-    rmBtn.textContent = state.realMeetMode ? '🌍 現實' : '📱 LINE';
-  }
 }
 
 // 取得各功能的有效模型（若未設定則 fallback 到全域模型）
@@ -705,53 +696,50 @@ function renderMessages(chatId) {
       // Desktop: right-click context menu
       row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
 
-      // Mobile: long press (300ms) → show inline action buttons
-      // 記錄 touch 起始位置，移動超過 8px 就取消（防止滾動誤觸）
-      let _lpTimer = null;
-      let _lpStartX = 0, _lpStartY = 0;
-      let _lpFired = false;
+      // Mobile: 向左滑動氣泡 → 顯示操作按鈕（避開 iOS 文字選取衝突）
+      let _swStartX = 0, _swStartY = 0, _swTracking = false;
+      const SWIPE_THRESHOLD = 40; // 需要滑動超過 40px 才觸發
 
       row.addEventListener('touchstart', e => {
-        _lpFired = false;
-        _lpStartX = e.touches[0].clientX;
-        _lpStartY = e.touches[0].clientY;
-        _lpTimer = setTimeout(() => {
-          _lpFired = true;
-          // 震動回饋（Android）
-          if (navigator.vibrate) navigator.vibrate(40);
-          // 隱藏其他已開啟的 action panel
+        _swStartX = e.touches[0].clientX;
+        _swStartY = e.touches[0].clientY;
+        _swTracking = true;
+      }, { passive: true });
+
+      row.addEventListener('touchmove', e => {
+        if (!_swTracking) return;
+        const dx = e.touches[0].clientX - _swStartX;
+        const dy = e.touches[0].clientY - _swStartY;
+        // 若垂直滑動大於水平，視為捲動，取消追蹤
+        if (Math.abs(dy) > Math.abs(dx) + 5) {
+          _swTracking = false;
+        }
+      }, { passive: true });
+
+      row.addEventListener('touchend', e => {
+        if (!_swTracking) return;
+        _swTracking = false;
+        const dx = e.changedTouches[0].clientX - _swStartX;
+        const dy = e.changedTouches[0].clientY - _swStartY;
+        // 只有水平滑動 > 40px 且垂直偏移小才觸發
+        if (Math.abs(dx) >= SWIPE_THRESHOLD && Math.abs(dy) < 30) {
+          // 隱藏其他已開啟的
           document.querySelectorAll('.msg-actions.mobile-show')
             .forEach(el => el.classList.remove('mobile-show'));
           const actions = row.querySelector('.msg-actions');
           if (actions) {
             actions.classList.add('mobile-show');
+            if (navigator.vibrate) navigator.vibrate(30);
             // 點其他地方收起
             const dismiss = ev => {
-              if (!actions.contains(ev.target)) {
+              if (!row.contains(ev.target)) {
                 actions.classList.remove('mobile-show');
                 document.removeEventListener('touchstart', dismiss, true);
               }
             };
             setTimeout(() => document.addEventListener('touchstart', dismiss, true), 80);
           }
-        }, 300);
-      }, { passive: true });
-
-      row.addEventListener('touchmove', e => {
-        if (_lpTimer) {
-          const dx = e.touches[0].clientX - _lpStartX;
-          const dy = e.touches[0].clientY - _lpStartY;
-          // 移動超過 8px 視為滾動，取消長按
-          if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-            clearTimeout(_lpTimer);
-            _lpTimer = null;
-          }
         }
-      }, { passive: true });
-
-      row.addEventListener('touchend', () => {
-        clearTimeout(_lpTimer);
-        _lpTimer = null;
       });
 
       groupEl.appendChild(row);
@@ -841,63 +829,125 @@ async function sendMessage() {
 
   const thisChatId = state.activeChat;
   const thisCharId = state.activeCharId;
-
   const imagesToSend = [...pendingChatImages];
   pendingChatImages = [];
   renderChatImgPreviewStrip();
 
-  // 若有正在等待中的 batch（同一個聊天室），累積進去並重設計時器
-  if (_batchTimer && _batchChatId === thisChatId) {
-    clearTimeout(_batchTimer);
-    if (text) _batchBuffer.push(text);
-    if (imagesToSend.length) _batchImages.push(...imagesToSend);
-    showBatchIndicator();
-    _batchTimer = setTimeout(flushBatch, BATCH_DELAY_MS);
+  const chat = state.chats.find(c => c.id === thisChatId);
+  if (!chat) return;
+
+  if (imagesToSend.length > 0) {
+    imagesToSend.forEach(img => {
+      const msg = { id: uid(), role: 'user', content: text || '（圖片）', type: 'image', imageUrl: img.dataUrl, time: Date.now() };
+      chat.messages.push(msg);
+    });
+    dbPut('chats', chat);
+    if (state.activeChat === thisChatId) renderMessages(thisChatId);
+  } else if (text) {
+    addUserMessage(thisChatId, text);
+  }
+
+  updateChatStats(thisCharId);
+  if (state.activeChat === thisChatId) showTyping();
+
+  try {
+    const responses = await callGemini(thisChatId, text || '（圖片）', null, imagesToSend);
+    if (state.activeChat === thisChatId) hideTyping();
+    for (let i = 0; i < responses.length; i++) {
+      const msgLen = responses[i].length;
+      const typingDelay = Math.min(300 + msgLen * 55, 2200) + Math.random() * 300;
+      await delay(typingDelay);
+      addAIMessage(thisChatId, responses[i]);
+      if (i < responses.length - 1) {
+        if (state.activeChat === thisChatId) showTyping();
+        await delay(350 + Math.random() * 250);
+      }
+    }
+    await autoUpdateMemory(thisChatId);
+  } catch(err) {
+    if (state.activeChat === thisChatId) hideTyping();
+    addAIMessage(thisChatId, `（系統錯誤：${err.message}）`);
+  }
+}
+
+// 把目前輸入欄的文字加入合併佇列（不立即送出）
+function queueMessage() {
+  if (!state.activeChat) return;
+  const input = document.getElementById('msg-input');
+  const text = input.value.trim();
+  const hasImages = pendingChatImages.length > 0;
+  if (!text && !hasImages) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  const thisChatId = state.activeChat;
+  const thisCharId = state.activeCharId;
+  const imagesToSend = [...pendingChatImages];
+  pendingChatImages = [];
+  renderChatImgPreviewStrip();
+
+  if (_batchChatId !== thisChatId) {
+    // 切換了聊天室，重設
+    _batchBuffer = [];
+    _batchImages = [];
+  }
+  _batchChatId = thisChatId;
+  _batchCharId = thisCharId;
+  if (text) _batchBuffer.push(text);
+  if (imagesToSend.length) _batchImages.push(...imagesToSend);
+
+  updateBatchUI();
+  showToast(`📝 已加入佇列（共 ${_batchBuffer.length + _batchImages.length} 則）`);
+}
+
+function updateBatchUI() {
+  const count = _batchBuffer.length + _batchImages.length;
+  let flushBtn = document.getElementById('flush-btn');
+
+  if (count === 0) {
+    if (flushBtn) flushBtn.style.display = 'none';
     return;
   }
 
-  // 否則開始新的 batch
-  _batchChatId = thisChatId;
-  _batchCharId = thisCharId;
-  _batchBuffer = text ? [text] : [];
-  _batchImages = imagesToSend;
-
-  showBatchIndicator();
-  _batchTimer = setTimeout(flushBatch, BATCH_DELAY_MS);
-}
-
-function showBatchIndicator() {
-  // 顯示「等待合併」提示在輸入欄位旁
-  let ind = document.getElementById('batch-indicator');
-  if (!ind) {
-    ind = document.createElement('div');
-    ind.id = 'batch-indicator';
-    ind.style.cssText = 'position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(201,184,232,0.95);color:#3d3450;font-size:0.78rem;padding:0.35rem 1rem;border-radius:20px;z-index:500;pointer-events:none;backdrop-filter:blur(8px);white-space:nowrap;';
-    document.body.appendChild(ind);
+  if (!flushBtn) {
+    flushBtn = document.createElement('button');
+    flushBtn.id = 'flush-btn';
+    flushBtn.onclick = flushBatch;
+    flushBtn.style.cssText = `
+      position:absolute; bottom:100%; left:50%; transform:translateX(-50%);
+      margin-bottom:6px;
+      background:linear-gradient(135deg,var(--lavender),var(--milk-blue));
+      color:white; border:none; border-radius:20px;
+      padding:0.4rem 1.1rem; font-family:inherit; font-size:0.78rem;
+      cursor:pointer; white-space:nowrap;
+      box-shadow:0 2px 10px rgba(180,160,210,0.35);
+      z-index:10;
+    `;
+    const inputArea = document.getElementById('input-area');
+    if (inputArea) {
+      inputArea.style.position = 'relative';
+      inputArea.appendChild(flushBtn);
+    }
   }
-  const count = _batchBuffer.length + _batchImages.length;
-  ind.textContent = `⏳ 等待 ${(BATCH_DELAY_MS/1000).toFixed(1)}s 後送出（${count} 則）⋯ 可繼續輸入以合併`;
-  ind.style.display = 'block';
-  clearTimeout(ind._hideTimer);
-  ind._hideTimer = setTimeout(() => { if (ind) ind.style.display = 'none'; }, BATCH_DELAY_MS + 500);
-}
 
+  flushBtn.textContent = `🚀 送出（已排 ${count} 則）`;
+  flushBtn.style.display = 'block';
+}
 
 
 // ─── MESSAGE BATCHING ────────────────────────────────
-// 分段傳送累積機制：按下送出後，等 pendingBatchDelay 毫秒若有再按送出則合併
+// 分段傳送累積機制：按 ➤ 累積訊息，按「🚀 送出」才真正送給 AI
 let _batchBuffer = [];           // 累積的訊息文字
 let _batchImages = [];           // 累積的圖片
-let _batchTimer = null;
-const BATCH_DELAY_MS = 2500;     // 2.5秒內再次按送出就合併
 let _batchChatId = null;
 let _batchCharId = null;
 
 async function flushBatch() {
-  clearTimeout(_batchTimer);
-  _batchTimer = null;
-
   if (!_batchBuffer.length && !_batchImages.length) return;
+
+  // 隱藏合併送出按鈕
+  const flushBtn = document.getElementById('flush-btn');
+  if (flushBtn) flushBtn.style.display = 'none';
 
   const thisChatId = _batchChatId;
   const thisCharId = _batchCharId;
@@ -952,27 +1002,8 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
   const persona = char?.personaId ? state.personas.find(p => p.id === char.personaId) : null;
 
   // Build system prompt
-  let baseSystemPrompt = overrideSystem || state.systemPrompt;
-
-  // 若是現實見面模式，替換為不同的 system prompt
-  if (state.realMeetMode && !overrideSystem) {
-    baseSystemPrompt = baseSystemPrompt
-      .replace(/Reply ONLY in Traditional Chinese[\s\S]*?Be warm, casual, and emotionally real\./,
-        `Reply ONLY in Traditional Chinese.
-
-You are {{char}} talking with {{user}} in REAL LIFE (not via LINE).
-This is a face-to-face or real-world interaction, NOT a chat app.
-
-Response style:
-- Write longer, more natural and expressive responses (3-8 sentences is fine)
-- No need to split into multiple short messages
-- React to real-world scenarios, physical presence, atmosphere
-- Can include actions, expressions, descriptions in (括號)
-- Be warm, genuine, and present in the moment`);
-  }
-
   let systemParts = [
-    baseSystemPrompt
+    (overrideSystem || state.systemPrompt)
       .replace(/\{\{char\}\}/g, char?.name || 'AI')
       .replace(/\{\{user\}\}/g, persona?.name || 'user'),
   ];
@@ -3402,23 +3433,6 @@ function openApiSettings() {
     if (opt) sel.value = state.model;
   }
   openModal('model-settings-modal');
-}
-
-function toggleRealMeetMode() {
-  state.realMeetMode = !state.realMeetMode;
-  const btn = document.getElementById('real-meet-toggle');
-  if (btn) {
-    btn.classList.toggle('on', state.realMeetMode);
-    btn.textContent = state.realMeetMode ? '🌍 現實' : '📱 LINE';
-    btn.title = state.realMeetMode ? '現實見面模式（點擊切換至 LINE 模式）' : 'LINE 聊天模式（點擊切換至現實模式）';
-  }
-  // 更新輸入欄位提示
-  const msgInput = document.getElementById('msg-input');
-  if (msgInput) {
-    msgInput.placeholder = state.realMeetMode ? '描述現實中發生的事...' : '傳訊息...';
-  }
-  saveSettings();
-  showToast(state.realMeetMode ? '🌍 現實見面模式 ON — 回覆將更長、更自然' : '📱 LINE 聊天模式 ON — 短訊息風格');
 }
 
 

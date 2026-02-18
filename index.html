@@ -1655,7 +1655,6 @@ body {
           <div class="header-status" id="header-status">— 點擊角色開始聊天 —</div>
         </div>
         <div class="header-actions">
-          <button class="header-btn" id="real-meet-toggle" onclick="toggleRealMeetMode()" title="LINE 聊天模式（點擊切換至現實模式）" style="font-size:0.72rem;padding:0.25rem 0.5rem;border-radius:8px;font-family:inherit;background:rgba(201,184,232,0.15);border:1px solid rgba(201,184,232,0.3);color:var(--text-mid);cursor:pointer;white-space:nowrap;">📱 LINE</button>
           <button class="header-btn" onclick="openChatOptions()" title="更多">⋯</button>
         </div>
       </div>
@@ -1686,6 +1685,7 @@ body {
           <textarea id="msg-input" placeholder="傳訊息..." rows="1"
             onkeydown="handleInputKey(event)"
             oninput="autoResize(this)"></textarea>
+          <button id="queue-btn" onclick="queueMessage()" title="加入佇列（分段合併後一次送出）" style="padding:0 0.7rem;border:none;border-radius:14px;background:rgba(201,184,232,0.3);color:var(--text-mid);font-size:1rem;cursor:pointer;flex-shrink:0;transition:background 0.15s;" onmouseenter="this.style.background='rgba(201,184,232,0.55)'" onmouseleave="this.style.background='rgba(201,184,232,0.3)'">＋</button>
           <button id="send-btn" onclick="sendMessage()">➤</button>
         </div>
       </div>

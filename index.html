@@ -170,6 +170,44 @@ body {
 [data-theme="dark"] .toggle-switch { background: rgba(255,255,255,0.1); }
 [data-theme="dark"] .swipe-del-layer { filter: brightness(0.85); }
 
+/* ─── DARK MODE extra: cards, social, diary ─── */
+[data-theme="dark"] .post-card { background: rgba(42,36,56,0.95) !important; border-color: rgba(168,154,204,0.12) !important; }
+[data-theme="dark"] .char-card { background: rgba(36,32,48,0.95) !important; }
+[data-theme="dark"] .diary-entry-card { background: rgba(42,36,56,0.95) !important; border-color: rgba(168,154,204,0.12) !important; }
+[data-theme="dark"] .cal-grid { background: rgba(36,32,48,0.6) !important; }
+[data-theme="dark"] .cal-day { color: var(--text-mid); }
+[data-theme="dark"] .cal-day:hover { background: rgba(168,154,204,0.15); }
+[data-theme="dark"] .cal-day.has-entry { background: rgba(168,154,204,0.2); color: var(--text-dark); }
+[data-theme="dark"] .diary-char-card { background: rgba(42,36,56,0.95) !important; border-color: rgba(168,154,204,0.12) !important; }
+[data-theme="dark"] .diary-style-btn { background: rgba(42,36,56,0.9) !important; border-color: rgba(168,154,204,0.2) !important; color: var(--text-mid) !important; }
+[data-theme="dark"] .diary-regen-btn { background: rgba(42,36,56,0.9) !important; border-color: rgba(168,154,204,0.2) !important; color: var(--text-mid) !important; }
+[data-theme="dark"] .comment-bubble { background: rgba(36,32,48,0.95) !important; border-color: rgba(168,154,204,0.1) !important; }
+[data-theme="dark"] .th-item { background: rgba(42,36,56,0.9) !important; border-color: rgba(168,154,204,0.15) !important; }
+[data-theme="dark"] .achievement-card { background: rgba(42,36,56,0.95) !important; border-color: rgba(168,154,204,0.12) !important; }
+[data-theme="dark"] .persona-card { background: rgba(42,36,56,0.95) !important; border-color: rgba(168,154,204,0.12) !important; }
+[data-theme="dark"] .lorebook-item { background: rgba(42,36,56,0.9) !important; border-color: rgba(168,154,204,0.12) !important; }
+[data-theme="dark"] .chat-item { background: transparent; }
+[data-theme="dark"] .chat-item:hover { background: rgba(168,154,204,0.1) !important; }
+[data-theme="dark"] .chat-item.active { background: rgba(168,154,204,0.15) !important; }
+[data-theme="dark"] #messages-area { background: #1a1820; }
+[data-theme="dark"] #inner-voice-panel { background: rgba(26,24,32,0.97); border-color: rgba(168,154,204,0.15); }
+[data-theme="dark"] [style*="background:rgba(255,255,255,0.88)"],
+[data-theme="dark"] [style*="background:rgba(255,255,255,0.95)"],
+[data-theme="dark"] [style*="background:rgba(255,255,255,0.85)"],
+[data-theme="dark"] [style*="background:rgba(255,255,255,0.8)"],
+[data-theme="dark"] [style*="background:rgba(255,255,255,0.9)"] { background: rgba(42,36,56,0.95) !important; }
+[data-theme="dark"] .settings-section { background: transparent; }
+[data-theme="dark"] .settings-section-title { color: var(--text-light); }
+[data-theme="dark"] .add-chat-btn { border-color: rgba(168,154,204,0.2); color: var(--text-light); }
+[data-theme="dark"] select { background: #1a1820 !important; color: var(--text-dark) !important; }
+[data-theme="dark"] textarea { background: #1a1820 !important; color: var(--text-dark) !important; }
+[data-theme="dark"] .imagegen-type-btn,
+[data-theme="dark"] .imagegen-style-btn { background: rgba(42,36,56,0.9) !important; color: var(--text-mid) !important; border-color: rgba(168,154,204,0.2) !important; }
+[data-theme="dark"] .nav-btn { color: var(--text-light); }
+[data-theme="dark"] .nav-btn.active { background: var(--lavender); color: white; }
+[data-theme="dark"] #side-nav { background: linear-gradient(180deg, #1e1a2a, #1a2030, #1c1a22); }
+
+
 /* ─── MAIN LAYOUT ─── */
 #app { display: flex; width: 100%; height: 100dvh; overflow: hidden; }
 
@@ -2104,6 +2142,20 @@ body {
           <option value="">不綁定</option>
         </select>
       </div>
+      <div class="modal-field">
+        <label class="modal-label">初始關係狀態 <span style="font-size:0.7rem;color:var(--text-light);">（決定開局時 AI 的互動方式）</span></label>
+        <select class="modal-select" id="char-rel-select">
+          <option value="stranger">👤 陌生人</option>
+          <option value="acquaint">🤝 普通朋友</option>
+          <option value="friend">😊 好朋友</option>
+          <option value="close">💛 摯友</option>
+          <option value="ambiguous">💫 曖昧中</option>
+          <option value="crush">💕 心動</option>
+          <option value="lover">❤️ 戀人</option>
+          <option value="devoted">💍 摯愛</option>
+        </select>
+        <div style="font-size:0.72rem;color:var(--text-light);margin-top:0.3rem;">之後會根據對話內容動態演變。若要重置或手動調整，可在角色設定中修改。</div>
+      </div>
     </div>
     <div class="modal-tab-content" id="char-import">
       <div style="padding:1rem;text-align:center;color:var(--text-light);">
@@ -2338,6 +2390,11 @@ body {
       <label class="modal-label">🧠 長期記憶提取（Memory）</label>
       <input class="modal-input" type="text" id="model-feat-memory" placeholder="空白=使用全域模型" list="feat-model-list">
       <div class="modal-label" id="model-feat-hint-memory" style="margin-top:0.2rem;"></div>
+    </div>
+    <div class="modal-field">
+      <label class="modal-label">💭 心聲系統（Inner Voice）</label>
+      <input class="modal-input" type="text" id="model-feat-innervoice" placeholder="空白=使用全域模型" list="feat-model-list">
+      <div class="modal-label" id="model-feat-hint-innervoice" style="margin-top:0.2rem;"></div>
     </div>
 
     <datalist id="feat-model-list">

@@ -174,6 +174,19 @@ body {
 [data-theme="dark"] .post-card { background: rgba(42,36,56,0.95) !important; border-color: rgba(168,154,204,0.12) !important; }
 [data-theme="dark"] .char-card { background: rgba(36,32,48,0.95) !important; }
 [data-theme="dark"] .diary-entry-card { background: rgba(42,36,56,0.95) !important; border-color: rgba(168,154,204,0.12) !important; }
+[data-theme="dark"] .diary-entry { background: rgba(36,30,50,0.98) !important; border-color: rgba(168,154,204,0.15) !important; }
+[data-theme="dark"] .diary-entry-text { color: var(--text-dark) !important; }
+[data-theme="dark"] .diary-entry-date { color: var(--text-mid) !important; }
+[data-theme="dark"] .diary-entry-char { border-color: rgba(168,154,204,0.15) !important; }
+[data-theme="dark"] #diary-page { background: #1a1820 !important; }
+[data-theme="dark"] .diary-content { background: transparent !important; }
+[data-theme="dark"] .diary-nav-btn { color: var(--text-light) !important; }
+[data-theme="dark"] .cal-day { color: var(--text-mid) !important; background: transparent !important; }
+[data-theme="dark"] .cal-day.has-entry { background: rgba(168,154,204,0.25) !important; color: var(--text-dark) !important; }
+[data-theme="dark"] .cal-day.today { background: var(--lavender) !important; color: white !important; }
+[data-theme="dark"] .cal-day.selected { background: rgba(168,154,204,0.2) !important; border-color: var(--lavender) !important; color: var(--text-dark) !important; }
+[data-theme="dark"] #diary-generate-area { background: rgba(36,30,50,0.98) !important; }
+[data-theme="dark"] #diary-result-section { background: rgba(36,30,50,0.98) !important; }
 [data-theme="dark"] .cal-grid { background: rgba(36,32,48,0.6) !important; }
 [data-theme="dark"] .cal-day { color: var(--text-mid); }
 [data-theme="dark"] .cal-day:hover { background: rgba(168,154,204,0.15); }
@@ -398,7 +411,7 @@ body {
 #messages-area::-webkit-scrollbar { width: 4px; }
 #messages-area::-webkit-scrollbar-thumb { background: var(--lavender-light); border-radius: 2px; }
 
-.msg-group { display: flex; flex-direction: column; gap: 0.22rem; margin-bottom: 0.6rem; }
+.msg-group { display: flex; flex-direction: column; gap: 0.22rem; margin-bottom: 0.6rem; width: 100%; }
 .msg-group.user { align-items: flex-end; }
 .msg-group.ai { align-items: flex-start; }
 
@@ -406,8 +419,10 @@ body {
   display: flex;
   align-items: flex-end;
   gap: 0.5rem;
-  max-width: 78%;
+  max-width: 82%;
 }
+.msg-group.user .msg-row { margin-left: auto; }
+.msg-group.ai .msg-row { margin-right: auto; }
 .msg-group.user .msg-row { flex-direction: row-reverse; }
 .msg-group.ai .msg-row { }
 
@@ -2192,13 +2207,13 @@ body {
         <textarea class="modal-textarea" id="system-prompt-input" style="min-height:140px" placeholder="You are {{char}}, talking to {{user}}. Reply in Traditional Chinese..."></textarea>
       </div>
       <div class="modal-field">
-        <label class="modal-label">Context Template</label>
-        <select class="modal-select" id="context-template-select">
-          <option>預設 (LINE 聊天風格)</option>
-          <option>學術/正式</option>
-          <option>創意寫作</option>
-          <option>自訂...</option>
+        <label class="modal-label">對話風格模式 <span style="font-size:0.7rem;color:var(--text-light);">（切換後自動更新 System Prompt）</span></label>
+        <select class="modal-select" id="chat-style-select" onchange="onChatStyleChange(this.value)">
+          <option value="line">📱 LINE 模式（短訊息、分段傳送）</option>
+          <option value="prose">📖 長篇模式（一段式、情感豐富）</option>
+          <option value="custom">✏️ 自訂（手動編輯 System Prompt）</option>
         </select>
+        <div style="font-size:0.72rem;color:var(--text-light);margin-top:0.3rem;">選擇模式後，下方 System Prompt 會自動填入對應內容，可再自行微調。</div>
       </div>
     </div>
     <div class="modal-tab-content" id="preset-jailbreak">

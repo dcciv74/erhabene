@@ -1,3 +1,29 @@
+// ── 對話風格模板 ─────────────────────────────────────
+const PROMPT_TEMPLATES = {
+  line: `You are {{char}}, a living, breathing person chatting with {{user}} via LINE messenger.
+Reply ONLY in Traditional Chinese.
+
+CRITICAL formatting rule — you MUST split your reply into multiple separate LINE messages:
+- Each message = one short thought, one emotion, or one sentence (1–2 sentences max)
+- Separate each message with a blank line (\n\n)
+- Send 2–4 messages total per response, like a real person texting
+
+Do NOT write one long paragraph. Do NOT use asterisks for actions. Use (括號) for expressions/stickers.
+Stay in character. Be warm, casual, and emotionally real.`,
+
+  prose: `You are {{char}}, talking with {{user}} in real life or a narrative setting.
+Reply ONLY in Traditional Chinese.
+
+Response style:
+- Write one rich, natural response (3–7 sentences)
+- No need to split into short messages
+- Include inner feelings, observations, actions in (括號) where natural
+- React to the moment — atmosphere, tone, body language, subtext
+- Be emotionally layered, not just reactive
+
+Do NOT split into short LINE-style messages. Stay in character. Be warm, genuine, and present.`,
+};
+
 // ═══════════════════════════════════════════════════════
 //  erhabene — app.js
 //  Pure frontend, IndexedDB for persistence
@@ -38,6 +64,7 @@ Stay in character. Be warm, casual, and emotionally real.`,
   jailbreak: '',
   jailbreakPosition: 'before_last',
   regexRules: '',
+  chatStyle: 'line', // 'line' | 'prose'
   socialPosts: [],  // [{id, charId, platform, content, imageUrl, comments:[], time}]
   diaryEntries: {}, // {charId: {date: content}}
   diaryStyle: 'default', // default | dark | spicy | sunny | cute
@@ -179,6 +206,7 @@ async function loadAllData() {
   // load settings
   const s = settings[0] || {};
   if (s.systemPrompt) state.systemPrompt = s.systemPrompt;
+  if (s.chatStyle) state.chatStyle = s.chatStyle;
   if (s.jailbreak) state.jailbreak = s.jailbreak;
   if (s.jailbreakPosition) state.jailbreakPosition = s.jailbreakPosition;
   if (s.regexRules) state.regexRules = s.regexRules;
@@ -201,6 +229,7 @@ async function saveSettings() {
   await dbPut('settings', {
     id: 'global',
     systemPrompt: state.systemPrompt,
+    chatStyle: state.chatStyle,
     jailbreak: state.jailbreak,
     jailbreakPosition: state.jailbreakPosition,
     regexRules: state.regexRules,
@@ -298,7 +327,7 @@ ${recentMsgs || '（尚無對話記錄）'}
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 1.2, maxOutputTokens: 1500 }
+        generationConfig: { temperature: 1.2, maxOutputTokens: 150 }
       })
     });
     const data = await res.json();
@@ -590,10 +619,10 @@ function renderSidebar(mode = 'chat') {
       return;
     }
 
-    // Sort chats by last message time
+    // Sort chats by last message time (fallback to creation time)
     const sortedChats = [...state.chats].sort((a,b) => {
-      const aTime = a.messages.length ? a.messages[a.messages.length-1].time : 0;
-      const bTime = b.messages.length ? b.messages[b.messages.length-1].time : 0;
+      const aTime = a.messages.length ? a.messages[a.messages.length-1].time : (a.createdAt || 0);
+      const bTime = b.messages.length ? b.messages[b.messages.length-1].time : (b.createdAt || 0);
       return bTime - aTime;
     });
 
@@ -1240,7 +1269,7 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
 
   // Build system prompt
   let systemParts = [
-    (overrideSystem || state.systemPrompt)
+    (overrideSystem || (state.chatStyle && PROMPT_TEMPLATES[state.chatStyle]) || state.systemPrompt)
       .replace(/\{\{char\}\}/g, char?.name || 'AI')
       .replace(/\{\{user\}\}/g, persona?.name || 'user'),
   ];
@@ -1564,7 +1593,7 @@ async function autoUpdateMemory(chatId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 1500 }
+        generationConfig: { maxOutputTokens: 500 }
       })
     });
     const data = await res.json();
@@ -1674,7 +1703,7 @@ ${memories ? `
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 1.2, maxOutputTokens: 2300 }
+        generationConfig: { temperature: 1.2, maxOutputTokens: 300 }
       })
     });
     const data = await res.json();
@@ -2550,6 +2579,7 @@ async function exportBackup() {
     diaryEntries: state.diaryEntries,
     settings: {
       systemPrompt: state.systemPrompt,
+    chatStyle: state.chatStyle,
       jailbreak: state.jailbreak,
       jailbreakPosition: state.jailbreakPosition,
       regexRules: state.regexRules,
@@ -3461,7 +3491,7 @@ ${memText ? `你們的共同記憶：${memText}` : ''}
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 1150 }
+        generationConfig: { maxOutputTokens: 150 }
       })
     });
     const data = await res.json();
@@ -3707,7 +3737,7 @@ ${recentMsgs}
 - -1/-2：有誤解、冷漠或距離感
 - -3：嚴重衝突或傷害
 只回傳 JSON，不加其他文字。` }] }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 1000 }
+        generationConfig: { temperature: 0.3, maxOutputTokens: 100 }
       })
     });
     const data = await res.json();
@@ -3764,7 +3794,7 @@ ${recentMsgs}
 請嚴格評估，只有真正有感情深度的連結才回傳 true。
 回傳 JSON：{"upgrade": true/false, "reason": "<一句話>"}
 只回傳 JSON。` }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 1000 }
+        generationConfig: { temperature: 0.2, maxOutputTokens: 100 }
       })
     });
     const data = await res.json();
@@ -3884,7 +3914,7 @@ ${existingMoments ? `已記錄的特別時刻（不要重複）：${existingMome
 若有，回傳：{"found": true, "emoji": "一個最貼切的 emoji", "title": "簡短標題（10字內）", "desc": "一句話描述（20字內）"}
 若無，回傳：{"found": false}
 只回傳 JSON。` }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1500 }
+        generationConfig: { temperature: 0.7, maxOutputTokens: 150 }
       })
     });
     const data = await res.json();
@@ -3966,7 +3996,7 @@ ${persona ? `你正在和 ${persona.name} 說話。${persona.desc ? persona.desc
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 1.1, maxOutputTokens: 2000 }
+        generationConfig: { temperature: 1.1, maxOutputTokens: 200 }
       })
     });
     const data = await res.json();
@@ -3994,8 +4024,34 @@ async function triggerSpecialMessage(msg) {
 }
 
 // ─── PRESETS & SETTINGS ─────────────────────────────
+function onChatStyleChange(val) {
+  const ta = document.getElementById('system-prompt-input');
+  if (!ta) return;
+  if (val === 'line' || val === 'prose') {
+    ta.value = PROMPT_TEMPLATES[val] || '';
+    ta.style.opacity = '0.7'; // hint that it's a preset
+  } else {
+    ta.value = state.systemPrompt;
+    ta.style.opacity = '1';
+  }
+}
+
 function savePreset() {
-  state.systemPrompt = document.getElementById('system-prompt-input').value || state.systemPrompt;
+  // Chat style switch
+  const styleSelect = document.getElementById('chat-style-select');
+  if (styleSelect) {
+    state.chatStyle = styleSelect.value;
+    // If switching to a template, auto-fill the system prompt textarea
+    if (state.chatStyle !== 'custom') {
+      state.systemPrompt = PROMPT_TEMPLATES[state.chatStyle] || state.systemPrompt;
+      const spInput = document.getElementById('system-prompt-input');
+      if (spInput) spInput.value = state.systemPrompt;
+    }
+  }
+  // Manual system prompt override (only if user edited directly and style is 'custom')
+  if (state.chatStyle === 'custom') {
+    state.systemPrompt = document.getElementById('system-prompt-input').value || state.systemPrompt;
+  }
   state.jailbreak = document.getElementById('jailbreak-input').value;
   state.jailbreakPosition = document.getElementById('jailbreak-position').value;
   state.regexRules = document.getElementById('regex-input').value;
@@ -4207,31 +4263,151 @@ async function regenLastMessage() {
 }
 
 // ─── STICKER PICKER ─────────────────────────────────
-function openStickerPicker() {
-  const stickers = [
+// ── 預設表情組 ──────────────────────────────────
+const STICKER_PRESETS = {
+  '通用': [
     '(開心地笑)','(害羞地捂臉)','(撒嬌)','(無奈嘆氣)',
     '(興奮跳跳)','(思考中...)','(困惑歪頭)','(心動中)',
     '(裝作沒聽到)','(偷偷觀察)','(賭氣鼓臉)','(溫柔微笑)',
-  ];
+  ],
+  '小太陽': [
+    '(燦爛地笑)','(跑過去抱住)','(蹦蹦跳跳)','(滿臉期待)',
+    '(超大聲歡呼)','(眼睛閃閃發光)','(拉著你轉圈)','(興奮揮手)',
+    '(毫不掩飾地開心)','(嘴角壓不下去)','(活力四射地說)','(雙手比愛心)',
+  ],
+  '理性·無奈': [
+    '(淡淡地看了你一眼)','(輕嘆一口氣)','(無奈地揉太陽穴)',
+    '(勉強配合地點頭)','(沉默片刻)','(眉頭微微蹙起)',
+    '(放棄解釋地聳肩)','(面無表情地說)','(內心os：算了)',
+    '(理解但不認同地點頭)','(忍住沒說什麼)','(冷靜地回應)',
+  ],
+  '天然黑': [
+    '(一臉無辜地說)','(眨了眨眼)','(認真地問)',
+    '(毫不自覺地說出心聲)','(直視對方)','(平靜地反問)',
+    '(說完才意識到有點毒)','(帶著純真笑容)','(不懂為什麼對方臉紅)',
+    '(誠懇地補刀)','(天然地說了件殺傷力很高的話)','(完全不覺得哪裡不對)',
+  ],
+};
+
+function getStickerList() {
+  try {
+    const custom = JSON.parse(localStorage.getItem('erh_custom_stickers') || '[]');
+    return custom;
+  } catch(e) { return []; }
+}
+
+function openStickerPicker() {
   const existing = document.getElementById('sticker-picker');
   if (existing) { existing.remove(); return; }
+
   const picker = document.createElement('div');
   picker.id = 'sticker-picker';
-  picker.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:white;border-radius:20px;padding:1rem;box-shadow:0 8px 32px rgba(180,160,210,0.3);display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;z-index:600;max-width:340px;width:92vw;';
-  stickers.forEach(s => {
-    const btn = document.createElement('button');
-    btn.style.cssText = 'padding:0.5rem;border:none;background:var(--lavender-soft);border-radius:10px;font-size:0.75rem;cursor:pointer;color:var(--text-mid);text-align:center;';
-    btn.textContent = s;
-    btn.onclick = () => {
-      document.getElementById('msg-input').value += s;
-      picker.remove();
-    };
-    picker.appendChild(btn);
+  picker.style.cssText = `
+    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    background:var(--header-bg); backdrop-filter:blur(16px);
+    border:1px solid rgba(201,184,232,0.25);
+    border-radius:20px; padding:0; box-shadow:0 8px 32px rgba(130,100,200,0.2);
+    z-index:600; max-width:360px; width:94vw;
+    display:flex; flex-direction:column; overflow:hidden;
+    max-height:60vh;
+  `;
+
+  // Tab bar
+  const tabBar = document.createElement('div');
+  tabBar.style.cssText = 'display:flex; overflow-x:auto; gap:0; border-bottom:1px solid rgba(201,184,232,0.2); flex-shrink:0; scrollbar-width:none;';
+
+  const allTabs = [...Object.keys(STICKER_PRESETS), '自訂'];
+  let activeTab = allTabs[0];
+
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid; grid-template-columns:repeat(3,1fr); gap:0.4rem; padding:0.8rem; overflow-y:auto; flex:1;';
+
+  function renderGrid(tab) {
+    activeTab = tab;
+    grid.innerHTML = '';
+    // Update tab active states
+    tabBar.querySelectorAll('.stk-tab').forEach(t => {
+      t.style.borderBottom = t.dataset.tab === tab
+        ? '2px solid var(--lavender)' : '2px solid transparent';
+      t.style.color = t.dataset.tab === tab ? 'var(--lavender)' : 'var(--text-light)';
+    });
+
+    if (tab === '自訂') {
+      // Custom stickers + add button
+      const customs = getStickerList();
+      customs.forEach((s, i) => {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'position:relative;';
+        const btn = document.createElement('button');
+        btn.style.cssText = 'width:100%;padding:0.45rem 0.3rem;border:none;background:var(--lavender-soft);border-radius:10px;font-size:0.72rem;cursor:pointer;color:var(--text-mid);text-align:center;word-break:break-all;line-height:1.3;';
+        btn.textContent = s;
+        btn.onclick = () => { insertSticker(s); picker.remove(); };
+        const del = document.createElement('button');
+        del.textContent = '×';
+        del.style.cssText = 'position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;border:none;background:rgba(232,120,120,0.9);color:white;font-size:0.6rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;';
+        del.onclick = (e) => { e.stopPropagation(); removeCustomSticker(i); renderGrid('自訂'); };
+        wrap.appendChild(btn);
+        wrap.appendChild(del);
+        grid.appendChild(wrap);
+      });
+      // Add button
+      const addBtn = document.createElement('button');
+      addBtn.textContent = '＋ 新增';
+      addBtn.style.cssText = 'padding:0.45rem;border:1.5px dashed rgba(201,184,232,0.5);background:transparent;border-radius:10px;font-size:0.72rem;cursor:pointer;color:var(--text-light);';
+      addBtn.onclick = () => {
+        const val = prompt('輸入新的表情動作（如：(偷偷看你)）');
+        if (val?.trim()) { addCustomSticker(val.trim()); renderGrid('自訂'); }
+      };
+      grid.appendChild(addBtn);
+    } else {
+      const stickers = STICKER_PRESETS[tab] || [];
+      stickers.forEach(s => {
+        const btn = document.createElement('button');
+        btn.style.cssText = 'padding:0.45rem 0.3rem;border:none;background:var(--lavender-soft);border-radius:10px;font-size:0.72rem;cursor:pointer;color:var(--text-mid);text-align:center;word-break:break-all;line-height:1.3;';
+        btn.textContent = s;
+        btn.onclick = () => { insertSticker(s); picker.remove(); };
+        grid.appendChild(btn);
+      });
+    }
+  }
+
+  allTabs.forEach(tab => {
+    const t = document.createElement('button');
+    t.className = 'stk-tab';
+    t.dataset.tab = tab;
+    t.textContent = tab;
+    t.style.cssText = `flex-shrink:0; padding:0.55rem 0.8rem; border:none; background:none;
+      font-family:inherit; font-size:0.75rem; cursor:pointer; white-space:nowrap;
+      border-bottom: 2px solid transparent; color:var(--text-light); transition:all 0.15s;`;
+    t.onclick = () => renderGrid(tab);
+    tabBar.appendChild(t);
   });
+
+  picker.appendChild(tabBar);
+  picker.appendChild(grid);
   document.body.appendChild(picker);
+  renderGrid(activeTab);
+
   setTimeout(() => document.addEventListener('click', e => {
-    if (!picker.contains(e.target)) picker.remove();
+    if (!picker.contains(e.target) && !e.target.closest('#sticker-picker')) picker.remove();
   }, { once: true }), 100);
+}
+
+function insertSticker(s) {
+  const input = document.getElementById('msg-input');
+  if (input) { input.value += s; input.focus(); }
+}
+
+function addCustomSticker(text) {
+  const list = getStickerList();
+  list.push(text);
+  localStorage.setItem('erh_custom_stickers', JSON.stringify(list));
+}
+
+function removeCustomSticker(idx) {
+  const list = getStickerList();
+  list.splice(idx, 1);
+  localStorage.setItem('erh_custom_stickers', JSON.stringify(list));
 }
 
 // ─── MODAL HELPERS ───────────────────────────────────
@@ -4261,7 +4437,11 @@ function openModal(id) {
     editingPersonaId = null;
   }
   if (id === 'preset-modal') {
-    document.getElementById('system-prompt-input').value = state.systemPrompt;
+    const sel = document.getElementById('chat-style-select');
+    if (sel) sel.value = state.chatStyle || 'line';
+    document.getElementById('system-prompt-input').value =
+      (state.chatStyle && state.chatStyle !== 'custom' && PROMPT_TEMPLATES[state.chatStyle])
+        ? PROMPT_TEMPLATES[state.chatStyle] : state.systemPrompt;
     document.getElementById('jailbreak-input').value = state.jailbreak;
     document.getElementById('jailbreak-position').value = state.jailbreakPosition;
     document.getElementById('regex-input').value = state.regexRules;

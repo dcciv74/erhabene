@@ -126,6 +126,50 @@ body {
 .setup-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(180,160,220,0.4); }
 .setup-btn:active { transform: translateY(0); }
 
+
+/* ─── DARK MODE ─── */
+[data-theme="dark"] {
+  --lavender: #a89acc;
+  --lavender-light: #3a3050;
+  --lavender-soft: #2a2438;
+  --milk-blue: #7aa8cc;
+  --milk-blue-light: #1e3045;
+  --milk-blue-soft: #1a2535;
+  --beige: #2a2420;
+  --beige-dark: #1a1510;
+  --beige-soft: #1a1820;
+  --text-dark: #e8e0f5;
+  --text-mid: #b8aac8;
+  --text-light: #7a6e8a;
+  --white: #242030;
+  --shadow: rgba(0,0,0,0.35);
+  --shadow-deep: rgba(0,0,0,0.5);
+  --bubble-user: linear-gradient(135deg, #6a52a8, #3a5880);
+  --bubble-ai: rgba(42,36,56,0.95);
+  --sidebar-bg: linear-gradient(180deg, #1e1a2a 0%, #1a2030 50%, #1c1a22 100%);
+  --header-bg: rgba(26,24,32,0.97);
+  --nav-active: #a89acc;
+}
+[data-theme="dark"] body { background: #1a1820; }
+[data-theme="dark"] .modal { background: #242030; border: 1px solid rgba(168,154,204,0.15); }
+[data-theme="dark"] .modal-input,
+[data-theme="dark"] .modal-select,
+[data-theme="dark"] .modal-textarea { background: #1a1820; color: var(--text-dark); border-color: rgba(168,154,204,0.2); }
+[data-theme="dark"] .settings-item { background: rgba(255,255,255,0.03); }
+[data-theme="dark"] .msg-actions { background: rgba(36,32,48,0.98); }
+[data-theme="dark"] .ctx-menu { background: #242030; border-color: rgba(168,154,204,0.2); }
+[data-theme="dark"] .chat-item:hover, [data-theme="dark"] .chat-item.active { background: rgba(168,154,204,0.1); }
+[data-theme="dark"] #setup-screen { background: linear-gradient(160deg,#1e1a2a,#1a2030,#1c1a22); }
+[data-theme="dark"] .setup-card { background: rgba(36,32,48,0.9); }
+[data-theme="dark"] .char-card { background: rgba(36,32,48,0.9); border-color: rgba(168,154,204,0.12); }
+[data-theme="dark"] .msg-del-btn { color: var(--text-light); }
+[data-theme="dark"] input[type="date"],
+[data-theme="dark"] input[type="text"],
+[data-theme="dark"] input[type="password"],
+[data-theme="dark"] input[type="number"] { background: #1a1820; color: var(--text-dark); }
+[data-theme="dark"] .toggle-switch { background: rgba(255,255,255,0.1); }
+[data-theme="dark"] .swipe-del-layer { filter: brightness(0.85); }
+
 /* ─── MAIN LAYOUT ─── */
 #app { display: flex; width: 100%; height: 100dvh; overflow: hidden; }
 
@@ -431,6 +475,28 @@ body {
   40% { transform: scale(1); opacity: 1; }
 }
 
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* ─── 關係 Banner 動畫 ─── */
+@keyframes relBannerIn {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+@keyframes relBannerOut {
+  from { transform: translateY(0);     opacity: 1; }
+  to   { transform: translateY(-100%); opacity: 0; }
+}
+@keyframes momentBannerIn {
+  from { transform: translateX(-50%) translateY(20px) scale(0.9); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0)    scale(1);   opacity: 1; }
+}
+@keyframes momentBannerOut {
+  from { transform: translateX(-50%) scale(1);   opacity: 1; }
+  to   { transform: translateX(-50%) scale(0.85); opacity: 0; }
+}
 @keyframes slideDown {
   from { transform: translateY(-100%); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
@@ -1710,6 +1776,18 @@ body {
         </div>
       </div>
       
+      <!-- 心聲面板 -->
+      <div id="inner-voice-panel" style="display:none;padding:0.8rem 1rem 0.4rem;background:var(--header-bg);border-top:1px solid rgba(201,184,232,0.15);animation:slideUp 0.2s ease;">
+        <div style="display:flex;align-items:flex-start;gap:0.7rem;">
+          <div id="iv-avatar" style="width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));display:flex;align-items:center;justify-content:center;font-size:0.85rem;flex-shrink:0;overflow:hidden;opacity:0.7;"></div>
+          <div style="flex:1;">
+            <div style="font-size:0.65rem;color:var(--text-light);margin-bottom:0.25rem;font-style:italic;">💭 心聲（僅你可見）</div>
+            <div id="iv-text" style="font-size:0.82rem;color:var(--text-mid);line-height:1.65;font-style:italic;white-space:pre-wrap;"></div>
+          </div>
+          <button onclick="closeInnerVoice()" style="background:none;border:none;color:var(--text-light);font-size:1rem;cursor:pointer;flex-shrink:0;padding:0;">×</button>
+        </div>
+      </div>
+
       <div id="input-area" style="display:none;">
         <div class="input-toolbar">
           <button class="toolbar-btn" onclick="triggerImageGen()" title="生成圖片">🖼️</button>
@@ -1718,6 +1796,7 @@ body {
           <button class="toolbar-btn" onclick="openStickerPicker()" title="(表情)">🎭</button>
           <button class="toolbar-btn" onclick="openModal('preset-modal')" title="Preset">📋</button>
           <button class="toolbar-btn" id="memory-toggle-btn" onclick="toggleMemoryPanel()" title="記憶">🧠</button>
+          <button class="toolbar-btn" onclick="generateInnerVoice()" title="心聲 — 讀取角色此刻的內心想法">💭</button>
         </div>
         <!-- Image preview strip -->
         <div id="chat-img-preview-strip" style="display:none;padding:0.4rem 0;display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;"></div>
@@ -1868,6 +1947,14 @@ body {
 
       <div class="settings-section">
         <div class="settings-section-title">介面操作</div>
+        <div class="settings-item" onclick="toggleDarkMode()">
+          <div class="settings-item-icon" style="background:var(--lavender-soft)">🌙</div>
+          <div style="flex:1;">
+            <div class="settings-item-label">黑暗模式</div>
+            <div style="font-size:0.72rem;color:var(--text-light);margin-top:2px;">減少夜間閱讀的眼睛疲勞</div>
+          </div>
+          <div class="toggle-switch" id="dark-mode-toggle"></div>
+        </div>
         <div class="settings-item" onclick="toggleSwipeDelete()">
           <div class="settings-item-icon" style="background:var(--lavender-soft)">👈</div>
           <div style="flex:1;">

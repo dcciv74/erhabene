@@ -12,6 +12,9 @@ let state = {
   maxTokens: 2048,
   contextMsgs: 30,  // 送出給 AI 的歷史訊息數量上限
   swipeDelete: false, // true = 左滑刪除, false = 側邊 × 按鈕
+  darkMode: false,
+  relationships: {}, // charId -> { level, score, lastEvalAt }
+  moments: {},      // charId -> [{ id, title, emoji, desc, time }]
   chars: [],        // [{id, name, avatar, desc, firstMsg, personaId}]
   chats: [],        // [{id, charId, title, messages:[]}]
   personas: [],     // [{id, name, desc}]
@@ -68,10 +71,10 @@ Stay in character. Be warm, casual, and emotionally real.`,
 // ─── INDEXEDDB ─────────────────────────────────────
 function initDB() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open('erhabene', 5);
+    const req = indexedDB.open('erhabene', 6);
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries'];
+      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries','relationships','moments'];
       ALL_STORES.forEach(store => {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store, { keyPath: 'id' });
@@ -154,6 +157,18 @@ async function loadAllData() {
     aAll.forEach(a => { state.achievements[a.id] = a.data; });
   } catch(e) {}
 
+  // load relationships
+  try {
+    const relAll = await dbGetAll('relationships');
+    relAll.forEach(r => { state.relationships[r.id] = r.data; });
+  } catch(e) {}
+
+  // load moments (special memories)
+  try {
+    const momAll = await dbGetAll('moments');
+    momAll.forEach(m => { state.moments[m.id] = m.data; });
+  } catch(e) {}
+
   // load chat stats
   try {
     const stAll = await dbGetAll('chatStats');
@@ -170,6 +185,7 @@ async function loadAllData() {
   if (s.userBirthday) state.userBirthday = s.userBirthday;
   if (s.contextMsgs) state.contextMsgs = s.contextMsgs;
   if (s.swipeDelete !== undefined) state.swipeDelete = s.swipeDelete;
+  if (s.darkMode !== undefined) state.darkMode = s.darkMode;
   // 各功能獨立模型
   if (s.modelChat !== undefined) state.modelChat = s.modelChat || '';
   if (s.modelSocial !== undefined) state.modelSocial = s.modelSocial || '';
@@ -190,6 +206,7 @@ async function saveSettings() {
     userBirthday: state.userBirthday,
     contextMsgs: state.contextMsgs,
     swipeDelete: state.swipeDelete,
+    darkMode: state.darkMode,
     modelChat: state.modelChat,
     modelSocial: state.modelSocial,
     modelSocialComment: state.modelSocialComment,
@@ -230,6 +247,7 @@ function enterApp() {
   updateChatStatsCounts();
   checkAnniversaryReminders();
   // 初始化設定頁 toggle 狀態
+  applyDarkMode();
   const sdt = document.getElementById('swipe-delete-toggle');
   if (sdt) sdt.classList.toggle('on', !!state.swipeDelete);
   const rwt = document.getElementById('realworld-toggle');
@@ -589,13 +607,16 @@ function openChat(chatId) {
     ? `<img src="${char.avatar}" alt="">` : (char.avatar || '🌸');
   document.getElementById('header-name').textContent = char.name;
 
-  // 自動連動 Persona：在副標題顯示目前角色綁定的 persona
+  // 副標題：Persona + 關係進度
   const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
   const statusEl = document.getElementById('header-status');
+  const relLv = getRelLevel(char.id);
+  const relD = getRelData(char.id);
+  const relHtml = `<span style="color:${relLv.color}">${relLv.emoji} ${relLv.label}</span> &nbsp;·&nbsp; <span style="color:var(--text-light)">好感 ${relD.score}</span>`;
   if (persona) {
-    statusEl.innerHTML = `在線 &nbsp;·&nbsp; <span style="color:var(--lavender);font-weight:500;">🎭 ${persona.name}</span>`;
+    statusEl.innerHTML = `<span style="color:var(--lavender);font-weight:500;">🎭 ${persona.name}</span> &nbsp;·&nbsp; ${relHtml}`;
   } else {
-    statusEl.textContent = '在線';
+    statusEl.innerHTML = relHtml;
   }
 
   // Render messages
@@ -969,6 +990,9 @@ async function sendMessage() {
       }
     }
     await autoUpdateMemory(thisChatId);
+    // 關係系統：評分 + 特別時刻偵測
+    scoreConversation(thisChatId, thisCharId).catch(()=>{});
+    checkForSpecialMoments(thisChatId, thisCharId).catch(()=>{});
   } catch(err) {
     if (state.activeChat === thisChatId) hideTyping();
     addAIMessage(thisChatId, `（系統錯誤：${err.message}）`);
@@ -1094,6 +1118,8 @@ async function flushBatch() {
       }
     }
     await autoUpdateMemory(thisChatId);
+    scoreConversation(thisChatId, thisCharId).catch(()=>{});
+    checkForSpecialMoments(thisChatId, thisCharId).catch(()=>{});
   } catch(err) {
     if (state.activeChat === thisChatId) hideTyping();
     addAIMessage(thisChatId, `（系統錯誤：${err.message}）`);
@@ -1114,6 +1140,11 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
   ];
 
   if (char?.desc) systemParts.push(`\n[Character Sheet]\n${char.desc}`);
+
+  // 關係進度注入 system prompt
+  const relInfo = getRelData(chat.charId);
+  const relLvInfo = REL_LEVELS.find(r => r.id === relInfo.level) || REL_LEVELS[0];
+  systemParts.push(`\n[Relationship Stage]\nCurrent relationship stage: "${relLvInfo.label}" (${relLvInfo.id}).\nBehave consistently with this stage. Do NOT rush to the next stage artificially.`);
   if (persona) systemParts.push(`\n[User Persona]\n你正在和 ${persona.name} 說話。${persona.desc || ''}`);
 
   // Lorebook injection
@@ -1486,6 +1517,75 @@ async function addMemoryItem() {
   await dbPut('memory', { id: state.activeChat, items: state.memory[state.activeChat] });
   renderMemoryPanel(state.activeChat);
   showToast('✓ 記憶已新增');
+}
+
+
+// ─── 心聲系統 ────────────────────────────────────────
+// 心聲不存進 chat.messages，是獨立的即時內心獨白，不污染對話記錄
+
+async function generateInnerVoice() {
+  if (!state.activeChat || !state.activeCharId) return;
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const char = state.chars.find(c => c.id === state.activeCharId);
+  if (!chat || !char) return;
+
+  const panel = document.getElementById('inner-voice-panel');
+  const textEl = document.getElementById('iv-text');
+  const avatarEl = document.getElementById('iv-avatar');
+  if (!panel || !textEl) return;
+
+  // 顯示面板並開始 loading 狀態
+  panel.style.display = 'block';
+  textEl.textContent = '⋯';
+  if (avatarEl) {
+    const av = char.avatar;
+    avatarEl.innerHTML = isImgSrc(av) ? `<img src="${av}" style="width:100%;height:100%;object-fit:cover;">` : (av || '🌸');
+  }
+
+  // 取最近 10 則對話作為背景
+  const recentMsgs = chat.messages.slice(-10)
+    .map(m => `${m.role === 'user' ? '對方' : char.name}: ${m.content}`).join('\n');
+
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const memories = (state.memory[state.activeChat] || []).slice(-5).map(m => m.text).join('、');
+
+  const prompt = `你是 ${char.name}。${char.desc?.slice(0,200) || ''}
+${persona ? `對方（你重要的人）是 ${persona.name}。${persona.desc || ''}` : ''}
+
+以下是你們最近的對話：
+${recentMsgs || '（還沒有對話記錄）'}
+${memories ? `
+你們之間重要的共同記憶：${memories}` : ''}
+
+現在請以第一人稱（「我」）用繁體中文，寫下你此刻真實的內心獨白。
+這是你不會說出口的心裡話——你真正的感受、顧慮、渴望、或是難以啟齒的想法。
+字數：80～150字。直接輸出獨白，不加任何標題或說明。`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 1.2, maxOutputTokens: 300 }
+      })
+    });
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (text) {
+      textEl.textContent = text;
+    } else {
+      textEl.textContent = '（心聲生成失敗，請稍後再試）';
+    }
+  } catch(e) {
+    textEl.textContent = `（錯誤：${e.message}）`;
+  }
+}
+
+function closeInnerVoice() {
+  const panel = document.getElementById('inner-voice-panel');
+  if (panel) panel.style.display = 'none';
 }
 
 function toggleMemoryPanel() {
@@ -3076,14 +3176,21 @@ async function generateDiary(dateStr, styleOverride) {
     if (state.diaryEntries[char.id]?.[dateStr]) continue;
 
     try {
-      const chatContext = state.chats
-        .filter(c => c.charId === char.id)
-        .flatMap(c => c.messages)
-        .filter(m => Math.abs(new Date(m.time) - new Date(dateStr)) < 86400000 * 3)
-        .slice(-15)
-        .map(m => `${m.role}: ${m.content}`).join('\n');
+      // 只取這個角色、當天的聊天記錄（嚴格當天，非前後3天）
+      const dayStart = new Date(dateStr).setHours(0, 0, 0, 0);
+      const dayEnd   = new Date(dateStr).setHours(23, 59, 59, 999);
+      const charChats = state.chats.filter(c => c.charId === char.id);
+      const chatContext = charChats
+        .flatMap(ch => ch.messages.map(m => ({ ...m, chatId: ch.id })))
+        .filter(m => m.time >= dayStart && m.time <= dayEnd)
+        .sort((a, b) => a.time - b.time)
+        .map(m => `${m.role === 'user' ? '我' : char.name}: ${m.content}`)
+        .join('\n');
 
-      const memories = Object.values(state.memory).flat().map(m => m?.text).filter(Boolean).slice(0,8).join('、');
+      // 只讀取此角色各聊天窗的記憶（以 chatId 為 key，嚴格隔離）
+      const memories = charChats
+        .flatMap(ch => state.memory[ch.id] || [])
+        .map(m => m?.text).filter(Boolean).slice(0, 8).join('、');
 
       // 紀念日資訊注入
       const charAnnivs = state.anniversaries.filter(a => a.charId === char.id);
@@ -3413,6 +3520,282 @@ function getTodayHolidays() {
   return found;
 }
 
+
+// ─── 關係進度系統 ───────────────────────────────────────
+// 關係階段定義（需滿足時間門檻 + 好感積分 + AI 定性評估）
+const REL_LEVELS = [
+  { id: 'stranger',  label: '陌生人', emoji: '👤', minDays: 0,  minScore: 0,   color: '#a89bb5' },
+  { id: 'acquaint',  label: '普通朋友', emoji: '🤝', minDays: 1,  minScore: 30,  color: '#7aa8cc' },
+  { id: 'friend',    label: '好朋友',  emoji: '😊', minDays: 3,  minScore: 80,  color: '#a89acc' },
+  { id: 'close',     label: '摯友',    emoji: '💛', minDays: 7,  minScore: 150, color: '#c9a84c' },
+  { id: 'ambiguous', label: '曖昧中',  emoji: '💫', minDays: 14, minScore: 250, color: '#e8a0c0' },
+  { id: 'crush',     label: '心動',    emoji: '💕', minDays: 21, minScore: 380, color: '#e87898' },
+  { id: 'lover',     label: '戀人',    emoji: '❤️', minDays: 30, minScore: 550, color: '#e84868' },
+  { id: 'devoted',   label: '摯愛',    emoji: '💍', minDays: 60, minScore: 800, color: '#c82848' },
+];
+
+function getRelData(charId) {
+  if (!state.relationships[charId]) {
+    state.relationships[charId] = { level: 'stranger', score: 0, lastEvalAt: 0, lastScoreAt: 0 };
+  }
+  return state.relationships[charId];
+}
+
+function getRelLevel(charId) {
+  const rel = getRelData(charId);
+  return REL_LEVELS.find(r => r.id === rel.level) || REL_LEVELS[0];
+}
+
+function saveRelData(charId) {
+  dbPut('relationships', { id: charId, data: state.relationships[charId] });
+}
+
+// 每次對話後給好感積分（AI 評分 -3 ~ +3，但每天上限 +15）
+async function scoreConversation(chatId, charId) {
+  const chat = state.chats.find(c => c.id === chatId);
+  const char = state.chars.find(c => c.id === charId);
+  if (!chat || !char) return;
+
+  const rel = getRelData(charId);
+  const now = Date.now();
+
+  // 節流：每次對話至少間隔 3 分鐘才評分
+  if (now - rel.lastScoreAt < 3 * 60 * 1000) return;
+  rel.lastScoreAt = now;
+
+  // 每天積分上限 +15（防止刷分）
+  const todayKey = new Date().toDateString();
+  const todayScoreKey = `erh_relscore_${charId}_${todayKey}`;
+  const todayScore = parseInt(localStorage.getItem(todayScoreKey) || '0');
+  if (todayScore >= 15) return;
+
+  const recentMsgs = chat.messages.slice(-6)
+    .map(m => `${m.role === 'user' ? '我' : char.name}: ${m.content}`).join('\n');
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `以下是兩人的對話片段：
+${recentMsgs}
+
+請評估這段對話對兩人感情關係的影響，回傳一個 JSON：
+{"score": <整數，-3 到 +3>, "reason": "<一句話說明>"}
+- +3：非常正面，有深度連結、真誠交流、心動時刻
+- +1/+2：正面，氣氛良好
+- 0：中性普通對話
+- -1/-2：有誤解、冷漠或距離感
+- -3：嚴重衝突或傷害
+只回傳 JSON，不加其他文字。` }] }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 100 }
+      })
+    });
+    const data = await res.json();
+    let raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{"score":0}';
+    raw = raw.replace(/```json|```/g, '').trim();
+    const { score } = JSON.parse(raw);
+    const delta = Math.max(-3, Math.min(3, parseInt(score) || 0));
+    if (delta !== 0) {
+      rel.score = Math.max(0, rel.score + delta);
+      const newDayScore = Math.max(0, Math.min(15, todayScore + Math.max(0, delta)));
+      localStorage.setItem(todayScoreKey, newDayScore.toString());
+      saveRelData(charId);
+      updateRelDisplay(charId);
+
+      // 積分夠了就嘗試升級評估
+      await tryRelLevelUp(chatId, charId);
+    }
+  } catch(e) { /* silent */ }
+}
+
+// 嘗試升級關係階段（雙軌制：量化門檻 + AI 定性評估）
+async function tryRelLevelUp(chatId, charId) {
+  const rel = getRelData(charId);
+  const chat = state.chats.find(c => c.id === chatId);
+  const char = state.chars.find(c => c.id === charId);
+  if (!chat || !char) return;
+
+  const currentIdx = REL_LEVELS.findIndex(r => r.id === rel.level);
+  if (currentIdx >= REL_LEVELS.length - 1) return; // 已最高
+  const next = REL_LEVELS[currentIdx + 1];
+
+  // 量化門檻：積分 + 天數
+  const daysSinceFirst = Math.floor((Date.now() - (chat.messages[0]?.time || Date.now())) / 86400000);
+  if (rel.score < next.minScore || daysSinceFirst < next.minDays) return;
+
+  // 避免頻繁評估（至少 2 小時一次）
+  if (Date.now() - rel.lastEvalAt < 2 * 60 * 60 * 1000) return;
+  rel.lastEvalAt = Date.now();
+
+  // AI 定性評估
+  const recentMsgs = chat.messages.slice(-20)
+    .map(m => `${m.role === 'user' ? '我' : char.name}: ${m.content}`).join('\n');
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `根據以下對話，判斷兩人的感情是否已達到「${next.label}」的深度？
+對話片段：
+${recentMsgs}
+
+請嚴格評估，只有真正有感情深度的連結才回傳 true。
+回傳 JSON：{"upgrade": true/false, "reason": "<一句話>"}
+只回傳 JSON。` }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 100 }
+      })
+    });
+    const data = await res.json();
+    let raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{"upgrade":false}';
+    raw = raw.replace(/```json|```/g, '').trim();
+    const { upgrade, reason } = JSON.parse(raw);
+    if (upgrade) {
+      rel.level = next.id;
+      saveRelData(charId);
+      updateRelDisplay(charId);
+      showRelLevelUpBanner(char, next, reason);
+    }
+  } catch(e) { /* silent */ }
+}
+
+function showRelLevelUpBanner(char, level, reason) {
+  // 移除舊 banner
+  document.getElementById('rel-banner')?.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'rel-banner';
+  banner.style.cssText = `
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9500;
+    background: linear-gradient(135deg, ${level.color}dd, ${level.color}99);
+    backdrop-filter: blur(20px);
+    color: white;
+    padding: 1.2rem 1.5rem;
+    text-align: center;
+    animation: relBannerIn 0.5s cubic-bezier(0.34,1.56,0.64,1);
+    box-shadow: 0 4px 30px rgba(0,0,0,0.2);
+    cursor: pointer;
+  `;
+  banner.innerHTML = `
+    <div style="font-size:2rem;margin-bottom:0.3rem;">${level.emoji}</div>
+    <div style="font-size:1rem;font-weight:600;letter-spacing:0.05em;">關係升級</div>
+    <div style="font-size:1.4rem;font-weight:700;margin:0.2rem 0;">${char.name} × 你</div>
+    <div style="font-size:0.95rem;opacity:0.9;font-weight:500;">${level.label}</div>
+    ${reason ? `<div style="font-size:0.75rem;opacity:0.75;margin-top:0.4rem;">${reason}</div>` : ''}
+    <div style="font-size:0.68rem;opacity:0.6;margin-top:0.5rem;">點擊關閉</div>
+  `;
+  banner.onclick = () => {
+    banner.style.animation = 'relBannerOut 0.3s ease forwards';
+    setTimeout(() => banner.remove(), 300);
+  };
+  document.body.appendChild(banner);
+  setTimeout(() => banner.remove(), 8000);
+}
+
+function showMomentBanner(moment) {
+  document.getElementById('moment-banner')?.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'moment-banner';
+  banner.style.cssText = `
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    z-index: 9500;
+    background: rgba(255,255,255,0.97);
+    backdrop-filter: blur(20px);
+    border: 1.5px solid rgba(201,184,232,0.4);
+    border-radius: 20px;
+    padding: 1rem 1.4rem;
+    text-align: center;
+    min-width: 240px; max-width: 300px;
+    box-shadow: 0 8px 32px rgba(180,160,210,0.3);
+    animation: momentBannerIn 0.5s cubic-bezier(0.34,1.56,0.64,1);
+    cursor: pointer;
+  `;
+  banner.innerHTML = `
+    <div style="font-size:2rem;margin-bottom:0.2rem;">${moment.emoji}</div>
+    <div style="font-size:0.68rem;color:#a89bb5;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.2rem;">特別記憶</div>
+    <div style="font-size:1rem;font-weight:700;color:#3d3450;">${moment.title}</div>
+    ${moment.desc ? `<div style="font-size:0.78rem;color:#6b5f7a;margin-top:0.3rem;line-height:1.5;">${moment.desc}</div>` : ''}
+  `;
+  banner.onclick = () => {
+    banner.style.animation = 'momentBannerOut 0.25s ease forwards';
+    setTimeout(() => banner.remove(), 250);
+  };
+  document.body.appendChild(banner);
+  setTimeout(() => banner.remove(), 7000);
+}
+
+// 每隔 N 則訊息讓 AI 掃描是否有值得記住的特別時刻
+async function checkForSpecialMoments(chatId, charId) {
+  const chat = state.chats.find(c => c.id === chatId);
+  const char = state.chars.find(c => c.id === charId);
+  if (!chat || !char) return;
+
+  // 每 8 則訊息檢查一次
+  if (chat.messages.length % 8 !== 0) return;
+
+  // 每天最多觸發 3 次特別時刻
+  const todayKey = new Date().toDateString();
+  const momKey = `erh_momcheck_${charId}_${todayKey}`;
+  const todayCount = parseInt(localStorage.getItem(momKey) || '0');
+  if (todayCount >= 3) return;
+
+  const recentMsgs = chat.messages.slice(-8)
+    .map(m => `${m.role === 'user' ? '我' : char.name}: ${m.content}`).join('\n');
+
+  const existingMoments = (state.moments[charId] || []).map(m => m.title).join('、');
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `以下是 ${char.name} 和使用者的最近對話：
+${recentMsgs}
+
+${existingMoments ? `已記錄的特別時刻（不要重複）：${existingMoments}` : ''}
+
+請判斷這段對話中，是否有值得永久記住的「第一次」或「特別時刻」？
+例如：第一次說出心裡話、第一次一起做某件事、某個讓人難忘的瞬間、重要的承諾等。
+普通對話不算，只有真正特別的才算。
+
+若有，回傳：{"found": true, "emoji": "一個最貼切的 emoji", "title": "簡短標題（10字內）", "desc": "一句話描述（20字內）"}
+若無，回傳：{"found": false}
+只回傳 JSON。` }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 150 }
+      })
+    });
+    const data = await res.json();
+    let raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{"found":false}';
+    raw = raw.replace(/```json|```/g, '').trim();
+    const result = JSON.parse(raw);
+    if (result.found && result.title) {
+      const moment = { id: uid(), title: result.title, emoji: result.emoji || '✨', desc: result.desc || '', time: Date.now() };
+      if (!state.moments[charId]) state.moments[charId] = [];
+      state.moments[charId].push(moment);
+      dbPut('moments', { id: charId, data: state.moments[charId] });
+      localStorage.setItem(momKey, (todayCount + 1).toString());
+      showMomentBanner(moment);
+    }
+  } catch(e) { /* silent */ }
+}
+
+function updateRelDisplay(charId) {
+  const rel = getRelData(charId);
+  const level = REL_LEVELS.find(r => r.id === rel.level) || REL_LEVELS[0];
+  // 更新 header status（若目前開著這個角色的聊天）
+  if (state.activeCharId === charId) {
+    const statusEl = document.getElementById('header-status');
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color:${level.color}">${level.emoji} ${level.label}</span> &nbsp;·&nbsp; <span style="color:var(--text-light)">好感 ${rel.score}</span>`;
+    }
+  }
+}
+
 async function checkRealWorldEvents() {
   if (!state.realWorldEvents) return;
   const today = new Date();
@@ -3547,6 +3930,18 @@ function openApiSettings() {
   openModal('model-settings-modal');
 }
 
+
+function toggleDarkMode() {
+  state.darkMode = !state.darkMode;
+  applyDarkMode();
+  saveSettings();
+}
+
+function applyDarkMode() {
+  document.documentElement.setAttribute('data-theme', state.darkMode ? 'dark' : '');
+  const toggle = document.getElementById('dark-mode-toggle');
+  if (toggle) toggle.classList.toggle('on', state.darkMode);
+}
 
 function toggleSwipeDelete() {
   state.swipeDelete = !state.swipeDelete;

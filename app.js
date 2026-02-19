@@ -327,7 +327,7 @@ ${recentMsgs || '（尚無對話記錄）'}
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 1.2, maxOutputTokens: 150 }
+        generationConfig: { temperature: 1.2, maxOutputTokens: 1500 }
       })
     });
     const data = await res.json();
@@ -1593,7 +1593,7 @@ async function autoUpdateMemory(chatId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 500 }
+        generationConfig: { maxOutputTokens: 1500 }
       })
     });
     const data = await res.json();
@@ -1703,7 +1703,7 @@ ${memories ? `
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 1.2, maxOutputTokens: 300 }
+        generationConfig: { temperature: 1.2, maxOutputTokens: 2300 }
       })
     });
     const data = await res.json();
@@ -3491,7 +3491,7 @@ ${memText ? `你們的共同記憶：${memText}` : ''}
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 150 }
+        generationConfig: { maxOutputTokens: 1500 }
       })
     });
     const data = await res.json();
@@ -3737,7 +3737,7 @@ ${recentMsgs}
 - -1/-2：有誤解、冷漠或距離感
 - -3：嚴重衝突或傷害
 只回傳 JSON，不加其他文字。` }] }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 100 }
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1000 }
       })
     });
     const data = await res.json();
@@ -3794,7 +3794,7 @@ ${recentMsgs}
 請嚴格評估，只有真正有感情深度的連結才回傳 true。
 回傳 JSON：{"upgrade": true/false, "reason": "<一句話>"}
 只回傳 JSON。` }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 100 }
+        generationConfig: { temperature: 0.2, maxOutputTokens: 1000 }
       })
     });
     const data = await res.json();
@@ -3914,7 +3914,7 @@ ${existingMoments ? `已記錄的特別時刻（不要重複）：${existingMome
 若有，回傳：{"found": true, "emoji": "一個最貼切的 emoji", "title": "簡短標題（10字內）", "desc": "一句話描述（20字內）"}
 若無，回傳：{"found": false}
 只回傳 JSON。` }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 150 }
+        generationConfig: { temperature: 0.7, maxOutputTokens: 1500 }
       })
     });
     const data = await res.json();
@@ -3996,7 +3996,7 @@ ${persona ? `你正在和 ${persona.name} 說話。${persona.desc ? persona.desc
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 1.1, maxOutputTokens: 200 }
+        generationConfig: { temperature: 1.1, maxOutputTokens: 2000 }
       })
     });
     const data = await res.json();

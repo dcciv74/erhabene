@@ -75,9 +75,6 @@ Stay in character. Be warm, casual, and emotionally real.`,
   diaryMonth: new Date(),
   selectedDiaryDate: null,
   ctxTargetMsgId: null,
-  autoMsgEnabled: false,
-  autoMsgHours: 3,
-  autoMsgTimer: null,
   editingCharId: null,
   anniversaries: [], // [{id, type, charId, date, customName}]
   achievements: {},  // {charId: {generated: [{id,name,desc,icon,condition,unlocked}], stats}}
@@ -86,6 +83,8 @@ Stay in character. Be warm, casual, and emotionally real.`,
   theaterEntries: {}, // { charId: [{id,prompt,style,text,time}] }
   diaryCharFilter: 'all',   // 'all' | charId
   chatStats: {},    // {charId: {days: Set, messages: 0, startDate}}
+  fragments: {},    // {charId: [{id, theme, content, type, unlockedAt, scoreThreshold}]}
+  dailyTopics: {},  // {'charId_date': {topics:[],generatedAt}}
   // 各功能獨立模型設定（空字串代表使用全域模型）
   modelChat: '',
   modelSocial: '',
@@ -102,7 +101,7 @@ function initDB() {
     const req = indexedDB.open('erhabene', 6);
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries','relationships','moments'];
+      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries','relationships','moments','fragments'];
       ALL_STORES.forEach(store => {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store, { keyPath: 'id' });
@@ -195,6 +194,12 @@ async function loadAllData() {
   try {
     const momAll = await dbGetAll('moments');
     momAll.forEach(m => { state.moments[m.id] = m.data; });
+  } catch(e) {}
+
+  // load fragments (unlockable content)
+  try {
+    const fragAll = await dbGetAll('fragments');
+    fragAll.forEach(f => { state.fragments[f.id] = f.data; });
   } catch(e) {}
 
   // load chat stats
@@ -506,6 +511,8 @@ function switchPage(page) {
   } else if (page === 'achievements') {
     renderAchievementCharSelect();
     renderAchievements();
+    renderMomentsGallery();
+    renderFragmentGallery();
   }
 }
 
@@ -534,44 +541,46 @@ function renderMobileChatList() {
     return;
   }
 
-  // 按角色分組
-  const chatsByChar = {};
-  state.chats.forEach(chat => {
-    if (!chatsByChar[chat.charId]) chatsByChar[chat.charId] = [];
-    chatsByChar[chat.charId].push(chat);
+  // 按最後訊息時間排序（和 sidebar 一致）
+  const sortedChats = [...state.chats].sort((a, b) => {
+    const aTime = a.messages.length ? a.messages[a.messages.length - 1].time : (a.createdAt || 0);
+    const bTime = b.messages.length ? b.messages[b.messages.length - 1].time : (b.createdAt || 0);
+    return bTime - aTime;
   });
 
   let html = `<div style="padding:0.8rem 1rem 0.4rem;font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>`;
 
-  Object.entries(chatsByChar).forEach(([charId, chats]) => {
-    const char = state.chats.length && state.chars.find(c => c.id === charId);
+  sortedChats.forEach(chat => {
+    const char = state.chars.find(c => c.id === chat.charId);
     if (!char) return;
     const isImg = char.avatar?.startsWith('data:') || isImgSrc(char.avatar);
     const avatarHtml = isImg
       ? `<img src="${char.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
       : `<span style="font-size:1.3rem;">${char.avatar || '🌸'}</span>`;
 
-    chats.forEach(chat => {
-      const lastMsg = chat.messages[chat.messages.length - 1];
-      const preview = lastMsg?.content?.slice(0, 40) || '開始聊天...';
-      const isActive = chat.id === state.activeChat;
-      html += `
-        <div onclick="openChatFromMobile('${chat.id}')"
-          style="display:flex;align-items:center;gap:0.85rem;padding:0.8rem 1rem;
-            border-bottom:1px solid rgba(201,184,232,0.12);cursor:pointer;
-            background:${isActive ? 'rgba(201,184,232,0.18)' : 'transparent'};
-            transition:background 0.15s;">
-          <div style="width:44px;height:44px;border-radius:50%;flex-shrink:0;
-            background:linear-gradient(135deg,var(--lavender),var(--milk-blue));
-            display:flex;align-items:center;justify-content:center;overflow:hidden;">
-            ${avatarHtml}
-          </div>
-          <div style="flex:1;min-width:0;">
+    const lastMsg = chat.messages[chat.messages.length - 1];
+    const preview = lastMsg?.content?.slice(0, 40) || '開始聊天...';
+    const timeStr = lastMsg ? formatTime(lastMsg.time) : '';
+    const isActive = chat.id === state.activeChat;
+    html += `
+      <div onclick="openChatFromMobile('${chat.id}')"
+        style="display:flex;align-items:center;gap:0.85rem;padding:0.8rem 1rem;
+          border-bottom:1px solid rgba(201,184,232,0.12);cursor:pointer;
+          background:${isActive ? 'rgba(201,184,232,0.18)' : 'transparent'};
+          transition:background 0.15s;">
+        <div style="width:44px;height:44px;border-radius:50%;flex-shrink:0;
+          background:linear-gradient(135deg,var(--lavender),var(--milk-blue));
+          display:flex;align-items:center;justify-content:center;overflow:hidden;">
+          ${avatarHtml}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;">
             <div style="font-weight:600;font-size:0.88rem;color:var(--text-dark);">${char.name}</div>
-            <div style="font-size:0.75rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${preview}</div>
+            <div style="font-size:0.68rem;color:var(--text-light);flex-shrink:0;margin-left:0.5rem;">${timeStr}</div>
           </div>
-        </div>`;
-    });
+          <div style="font-size:0.75rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${preview}</div>
+        </div>
+      </div>`;
   });
 
   container.innerHTML = html;
@@ -759,6 +768,12 @@ function openChat(chatId) {
 
   // Update sidebar active state
   renderSidebar();
+
+  // 節奏 badge
+  updatePacingBadge();
+
+  // 今日話題（延遲執行避免阻塞）
+  setTimeout(() => generateDailyTopics(char.id).then(() => renderDailyTopicsBar(char.id)), 1000);
 
   // Send first message if empty
   if (chat.messages.length === 0 && char.firstMsg) {
@@ -1128,138 +1143,14 @@ async function sendMessage() {
     // 關係系統：評分 + 特別時刻偵測
     scoreConversation(thisChatId, thisCharId).catch(()=>{});
     checkForSpecialMoments(thisChatId, thisCharId).catch(()=>{});
+    checkFragmentUnlock(thisCharId).catch(()=>{});
   } catch(err) {
     if (state.activeChat === thisChatId) hideTyping();
     addAIMessage(thisChatId, `（系統錯誤：${err.message}）`);
   }
 }
 
-// 把目前輸入欄的文字加入合併佇列（不立即送出）
-function queueMessage() {
-  if (!state.activeChat) return;
-  const input = document.getElementById('msg-input');
-  const text = input.value.trim();
-  const hasImages = pendingChatImages.length > 0;
-  if (!text && !hasImages) return;
-  input.value = '';
-  input.style.height = 'auto';
-
-  const thisChatId = state.activeChat;
-  const thisCharId = state.activeCharId;
-  const imagesToSend = [...pendingChatImages];
-  pendingChatImages = [];
-  renderChatImgPreviewStrip();
-
-  if (_batchChatId !== thisChatId) {
-    // 切換了聊天室，重設
-    _batchBuffer = [];
-    _batchImages = [];
-  }
-  _batchChatId = thisChatId;
-  _batchCharId = thisCharId;
-  if (text) _batchBuffer.push(text);
-  if (imagesToSend.length) _batchImages.push(...imagesToSend);
-
-  updateBatchUI();
-  showToast(`📝 已加入佇列（共 ${_batchBuffer.length + _batchImages.length} 則）`);
-}
-
-function updateBatchUI() {
-  const count = _batchBuffer.length + _batchImages.length;
-  let flushBtn = document.getElementById('flush-btn');
-
-  if (count === 0) {
-    if (flushBtn) flushBtn.style.display = 'none';
-    return;
-  }
-
-  if (!flushBtn) {
-    flushBtn = document.createElement('button');
-    flushBtn.id = 'flush-btn';
-    flushBtn.onclick = flushBatch;
-    flushBtn.style.cssText = `
-      position:absolute; bottom:100%; left:50%; transform:translateX(-50%);
-      margin-bottom:6px;
-      background:linear-gradient(135deg,var(--lavender),var(--milk-blue));
-      color:white; border:none; border-radius:20px;
-      padding:0.4rem 1.1rem; font-family:inherit; font-size:0.78rem;
-      cursor:pointer; white-space:nowrap;
-      box-shadow:0 2px 10px rgba(180,160,210,0.35);
-      z-index:10;
-    `;
-    const inputArea = document.getElementById('input-area');
-    if (inputArea) {
-      inputArea.style.position = 'relative';
-      inputArea.appendChild(flushBtn);
-    }
-  }
-
-  flushBtn.textContent = `🚀 送出（已排 ${count} 則）`;
-  flushBtn.style.display = 'block';
-}
-
-
-// ─── MESSAGE BATCHING ────────────────────────────────
-// 分段傳送累積機制：按 ➤ 累積訊息，按「🚀 送出」才真正送給 AI
-let _batchBuffer = [];           // 累積的訊息文字
-let _batchImages = [];           // 累積的圖片
-let _batchChatId = null;
-let _batchCharId = null;
-
-async function flushBatch() {
-  if (!_batchBuffer.length && !_batchImages.length) return;
-
-  // 隱藏合併送出按鈕
-  const flushBtn = document.getElementById('flush-btn');
-  if (flushBtn) flushBtn.style.display = 'none';
-
-  const thisChatId = _batchChatId;
-  const thisCharId = _batchCharId;
-  const combinedText = _batchBuffer.join('\n').trim();
-  const imagesToSend = [..._batchImages];
-  _batchBuffer = [];
-  _batchImages = [];
-  _batchChatId = null;
-  _batchCharId = null;
-
-  const chat = state.chats.find(c => c.id === thisChatId);
-  if (!chat) return;
-
-  if (imagesToSend.length > 0) {
-    imagesToSend.forEach(img => {
-      const msg = { id: uid(), role: 'user', content: combinedText || '（圖片）', type: 'image', imageUrl: img.dataUrl, time: Date.now() };
-      chat.messages.push(msg);
-    });
-    dbPut('chats', chat);
-    if (state.activeChat === thisChatId) renderMessages(thisChatId);
-  } else if (combinedText) {
-    addUserMessage(thisChatId, combinedText);
-  }
-
-  updateChatStats(thisCharId);
-  if (state.activeChat === thisChatId) showTyping();
-
-  try {
-    const responses = await callGemini(thisChatId, combinedText || '（圖片）', null, imagesToSend);
-    if (state.activeChat === thisChatId) hideTyping();
-    for (let i = 0; i < responses.length; i++) {
-      const msgLen = responses[i].length;
-      const typingDelay = Math.min(300 + msgLen * 55, 2200) + Math.random() * 300;
-      await delay(typingDelay);
-      addAIMessage(thisChatId, responses[i]);
-      if (i < responses.length - 1) {
-        if (state.activeChat === thisChatId) showTyping();
-        await delay(350 + Math.random() * 250);
-      }
-    }
-    await autoUpdateMemory(thisChatId);
-    scoreConversation(thisChatId, thisCharId).catch(()=>{});
-    checkForSpecialMoments(thisChatId, thisCharId).catch(()=>{});
-  } catch(err) {
-    if (state.activeChat === thisChatId) hideTyping();
-    addAIMessage(thisChatId, `（系統錯誤：${err.message}）`);
-  }
-}
+// 消息佇列功能已移除
 
 
 async function callGemini(chatId, userMessage, overrideSystem = null, userImages = []) {
@@ -1280,6 +1171,49 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
   const relInfo = getRelData(chat.charId);
   const relLvInfo = REL_LEVELS.find(r => r.id === relInfo.level) || REL_LEVELS[0];
   systemParts.push(`\n[Relationship Stage]\nCurrent relationship stage: "${relLvInfo.label}" (${relLvInfo.id}).\nBehave consistently with this stage. Do NOT rush to the next stage artificially.`);
+
+  // 節奏控制器注入
+  if (chat.pacingMode) {
+    const pacingMap = {
+      slow:    '【劇情節奏：慢熱試探】目前處於曖昧未明的試探期。請保持一定的距離感和含蓄，偶爾流露心動但不直說，讓暧昧自然延伸。不要急於推進關係或說破感情。',
+      pull:    '【劇情節奏：甜蜜膠著】彼此心裡都清楚但沒說破，享受這種拉扯。可以撒嬌、鬧別扭、給曖昧的回應，但維持未說破的緊張感。',
+      steady:  '【劇情節奏：穩定交往】關係已穩定，自然、親密、日常感。不需刻意製造張力，像真實伴侶一樣相處。',
+      intense: '【劇情節奏：濃情密意】熱戀期，可以黏膩、撒嬌、說情話，情感表達濃烈直接。',
+      drama:   '【劇情節奏：戲劇風暴】情緒起伏大，可能有誤會、爭吵、和好、強烈的情感衝突。讓對話充滿張力和戲劇性。',
+    };
+    const pacingText = pacingMap[chat.pacingMode];
+    if (pacingText) systemParts.push('\n' + pacingText);
+  }
+
+  // 作息模擬注入
+  if (char.schedule && char.schedule.enabled && char.schedule.desc) {
+    const now = new Date();
+    const weekdays = ['週日','週一','週二','週三','週四','週五','週六'];
+    const dayStr = weekdays[now.getDay()];
+    const timeStr = now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+    const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+
+    // 計算距上一則訊息的時間差
+    const allMsgs = chat.messages.filter(m => m.role !== 'system');
+    let timeDiffStr = '';
+    if (allMsgs.length >= 2) {
+      const lastMsg = allMsgs[allMsgs.length - 1];
+      const prevMsg = allMsgs[allMsgs.length - 2];
+      const diffMs = lastMsg.time - prevMsg.time;
+      if (diffMs > 60000) {
+        const diffMin = Math.floor(diffMs / 60000);
+        if (diffMin < 60) timeDiffStr = `距離上一則訊息 ${diffMin} 分鐘`;
+        else {
+          const h = Math.floor(diffMin / 60), m = diffMin % 60;
+          timeDiffStr = `距離上一則訊息 ${h} 小時${m > 0 ? m + '分鐘' : ''}`;
+        }
+      }
+    }
+
+    systemParts.push(`\n[作息模擬]\n現在是${dayStr}${isWeekend ? '（假日）' : '（平日）'} ${timeStr}。${timeDiffStr ? timeDiffStr + '。' : ''}
+角色作息：${char.schedule.desc}
+請根據以上時間和作息自然地融入回應中（例如提到剛起床、在上班、剛下班、準備睡覺等），不需要每次都明說，自然帶到即可。`);
+  }
   if (persona) systemParts.push(`\n[User Persona]\n你正在和 ${persona.name} 說話。${persona.desc || ''}`);
 
   // Lorebook injection
@@ -2256,6 +2190,10 @@ async function saveChar() {
     char.desc = document.getElementById('char-desc-input').value.trim();
     char.firstMsg = document.getElementById('char-first-msg-input').value.trim();
     char.personaId = document.getElementById('char-persona-select').value || null;
+    // 作息設定
+    const scheduleDesc = document.getElementById('char-schedule-input')?.value.trim() || '';
+    const scheduleEnabled = document.getElementById('char-schedule-toggle')?.classList.contains('on') || false;
+    char.schedule = { enabled: scheduleEnabled, desc: scheduleDesc };
     // 初始關係狀態 - 若有變更則也更新 relationship store
     const newRelLevel = document.getElementById('char-rel-select')?.value || 'stranger';
     if (!state.relationships[char.id]) state.relationships[char.id] = { level: 'stranger', score: 0, lastEvalAt: 0, lastScoreAt: 0 };
@@ -2280,6 +2218,8 @@ async function saveChar() {
   } else {
     // ── 新增模式 ──
     const initRelLevel = document.getElementById('char-rel-select')?.value || 'stranger';
+    const scheduleDesc2 = document.getElementById('char-schedule-input')?.value.trim() || '';
+    const scheduleEnabled2 = document.getElementById('char-schedule-toggle')?.classList.contains('on') || false;
     const char = {
       id: uid(),
       name,
@@ -2287,6 +2227,7 @@ async function saveChar() {
       desc: document.getElementById('char-desc-input').value.trim(),
       firstMsg: document.getElementById('char-first-msg-input').value.trim(),
       personaId: document.getElementById('char-persona-select').value || null,
+      schedule: { enabled: scheduleEnabled2, desc: scheduleDesc2 },
       createdAt: Date.now(),
     };
     state.chars.push(char);
@@ -2403,6 +2344,11 @@ function editChar(charId) {
   document.getElementById('char-first-msg-input').value = char.firstMsg || '';
   const personaSel = document.getElementById('char-persona-select');
   if (personaSel) personaSel.value = char.personaId || '';
+  // 填入作息設定
+  const schedInput = document.getElementById('char-schedule-input');
+  if (schedInput) schedInput.value = char.schedule?.desc || '';
+  const schedToggle = document.getElementById('char-schedule-toggle');
+  if (schedToggle) schedToggle.classList.toggle('on', !!char.schedule?.enabled);
   // 填入目前關係狀態
   const relSel = document.getElementById('char-rel-select');
   if (relSel) relSel.value = getRelData(char.id).level || 'stranger';
@@ -4023,6 +3969,417 @@ async function triggerSpecialMessage(msg) {
   addAIMessage(state.activeChat, msg);
 }
 
+// ─── 節奏控制器 ──────────────────────────────────────
+function openPacingModal() {
+  if (!state.activeChat) { showToast('請先開啟聊天視窗'); return; }
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  overlay.id = 'pacing-overlay';
+  const modes = [
+    { id: 'slow',    emoji: '🌱', label: '慢熱試探',   desc: '曖昧未明，保持距離感，偶爾心動不直說' },
+    { id: 'pull',    emoji: '🎐', label: '甜蜜膠著',   desc: '心裡清楚但沒說破，享受拉扯的緊張感' },
+    { id: 'steady',  emoji: '☀️', label: '穩定交往',   desc: '自然親密的日常感，像真實伴侶相處' },
+    { id: 'intense', emoji: '🔥', label: '濃情密意',   desc: '熱戀期，黏膩撒嬌，情感表達濃烈' },
+    { id: 'drama',   emoji: '⚡', label: '戲劇風暴',   desc: '情緒起伏大，誤解爭吵和好，充滿張力' },
+    { id: '',        emoji: '✨', label: '不設定',     desc: 'AI 依好感度自由判斷推進速度' },
+  ];
+  const current = chat.pacingMode || '';
+  overlay.innerHTML = `
+    <div class="modal" style="width:min(420px,94vw);">
+      <div class="modal-title">🎐 節奏控制器</div>
+      <div style="font-size:0.75rem;color:var(--text-light);margin-bottom:1rem;">設定這段對話的劇情推進節奏，不影響好感度數值</div>
+      <div style="display:flex;flex-direction:column;gap:0.5rem;margin-bottom:1.2rem;">
+        ${modes.map(m => `
+          <label style="display:flex;align-items:center;gap:0.8rem;padding:0.75rem 1rem;
+            background:${current===m.id ? 'rgba(201,184,232,0.25)' : 'var(--lavender-soft)'};
+            border:1.5px solid ${current===m.id ? 'var(--lavender)' : 'rgba(201,184,232,0.15)'};
+            border-radius:14px;cursor:pointer;transition:all 0.15s;">
+            <input type="radio" name="pacing" value="${m.id}" ${current===m.id?'checked':''} style="accent-color:var(--lavender);">
+            <div>
+              <div style="font-size:0.88rem;font-weight:600;color:var(--text-dark);">${m.emoji} ${m.label}</div>
+              <div style="font-size:0.72rem;color:var(--text-light);margin-top:0.1rem;">${m.desc}</div>
+            </div>
+          </label>`).join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn secondary" onclick="document.getElementById('pacing-overlay').remove()">取消</button>
+        <button class="modal-btn primary" onclick="savePacingMode()">確認</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function savePacingMode() {
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat) return;
+  const sel = document.querySelector('input[name="pacing"]:checked');
+  chat.pacingMode = sel ? sel.value : '';
+  await dbPut('chats', chat);
+  document.getElementById('pacing-overlay')?.remove();
+  updatePacingBadge();
+  const labels = { slow:'慢熱試探', pull:'甜蜜膠著', steady:'穩定交往', intense:'濃情密意', drama:'戲劇風暴', '':'已關閉' };
+  showToast('🎐 節奏：' + (labels[chat.pacingMode] || '已關閉'));
+}
+
+function updatePacingBadge() {
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const badge = document.getElementById('pacing-badge');
+  if (!badge) return;
+  const labels = { slow:'🌱慢熱', pull:'🎐膠著', steady:'☀️穩定', intense:'🔥熱戀', drama:'⚡戲劇' };
+  if (chat?.pacingMode && labels[chat.pacingMode]) {
+    badge.textContent = labels[chat.pacingMode];
+    badge.style.display = 'inline-block';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// ─── 今日話題 ─────────────────────────────────────────
+async function generateDailyTopics(charId) {
+  const char = state.chars.find(c => c.id === charId);
+  if (!char || !state.apiKey) return;
+
+  const todayKey = charId + '_' + new Date().toDateString();
+  if (state.dailyTopics[todayKey]) return; // 今天已生成
+
+  const chat = state.chats.find(c => c.charId === charId);
+  const recentMsgs = chat ? chat.messages.slice(-6).map(m =>
+    `${m.role === 'user' ? '我' : char.name}: ${m.content}`).join('\n') : '';
+  const relLv = getRelLevel(charId);
+  const pacing = chat?.pacingMode || '';
+  const pacingLabels = { slow:'慢熱試探', pull:'甜蜜膠著', steady:'穩定交往', intense:'濃情密意', drama:'戲劇風暴' };
+
+  const prompt = `你是一個戀愛助手。根據以下資訊，為用戶和 ${char.name} 生成今日互動建議。
+
+角色：${char.name}
+角色描述：${(char.desc||'').slice(0,150)}
+關係階段：${relLv.label}
+${pacing ? `目前節奏：${pacingLabels[pacing]}` : ''}
+最近對話：
+${recentMsgs || '（尚無對話）'}
+
+請生成 3 個建議，每個都要具體可行，符合現在的關係階段和節奏。
+回傳 JSON：
+{
+  "topic": "一個值得聊的話題（問句形式，讓用戶可以直接傳給對方）",
+  "activity": "一個可以一起做的事或互動（具體描述）",
+  "challenge": "一個今日小挑戰（例如：今天試著傳一張你今天看到的照片給他）"
+}
+只回傳 JSON，不加任何說明。`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.1, maxOutputTokens:1500} })
+    });
+    const data = await res.json();
+    let raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
+    raw = raw.replace(/```json|```/g,'').trim();
+    const result = JSON.parse(raw);
+    state.dailyTopics[todayKey] = { ...result, generatedAt: Date.now() };
+    renderDailyTopicsBar(charId);
+  } catch(e) { /* silent */ }
+}
+
+function renderDailyTopicsBar(charId) {
+  const bar = document.getElementById('daily-topics-bar');
+  if (!bar) return;
+  const todayKey = charId + '_' + new Date().toDateString();
+  const topics = state.dailyTopics[todayKey];
+  if (!topics) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'block';
+  bar.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;">
+      <div style="font-size:0.72rem;font-weight:600;color:var(--lavender);letter-spacing:0.05em;">✦ 今日話題</div>
+      <button onclick="document.getElementById('daily-topics-bar').style.display='none'" style="background:none;border:none;color:var(--text-light);cursor:pointer;font-size:0.85rem;padding:0;">×</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:0.35rem;">
+      ${topics.topic ? `<div class="daily-topic-chip" onclick="fillTopic(${JSON.stringify(topics.topic)})">💬 ${topics.topic}</div>` : ''}
+      ${topics.activity ? `<div class="daily-topic-chip" onclick="fillTopic(${JSON.stringify(topics.activity)})">🎯 ${topics.activity}</div>` : ''}
+      ${topics.challenge ? `<div class="daily-topic-chip" style="background:rgba(184,212,232,0.25);border-color:rgba(184,212,232,0.4);">⚡ ${topics.challenge}</div>` : ''}
+    </div>`;
+}
+
+function fillTopic(text) {
+  const input = document.getElementById('msg-input');
+  if (input) { input.value = text; input.focus(); autoResize(input); }
+}
+
+// ─── 碎片畫廊 (Fragment Gallery) ───────────────────────
+// 好感度門檻：每 50/100 分解鎖一片
+const FRAGMENT_THRESHOLDS = [50,100,150,200,300,400,500,600,750,900,1100,1300,1500,1800,2100,2500];
+
+const FRAGMENT_DEPTH_HINTS = {
+  50:   '初次印象',
+  100:  '日常碎片',
+  150:  '小小秘密',
+  200:  '某個習慣',
+  300:  '過去的故事',
+  400:  '關於你',
+  500:  '從未說過的話',
+  600:  '內心深處',
+  750:  '特別的記憶',
+  900:  '只給你看',
+  1100: '珍藏的秘密',
+  1300: '關於我們',
+  1500: '心裡話',
+  1800: '告白碎片',
+  2100: '最深的秘密',
+  2500: '核心碎片',
+};
+
+async function checkFragmentUnlock(charId) {
+  const rel = getRelData(charId);
+  const score = rel.score || 0;
+  const existing = (state.fragments[charId] || []).map(f => f.scoreThreshold);
+
+  // 找出所有已達到但還沒解鎖的門檻
+  const toUnlock = FRAGMENT_THRESHOLDS.filter(t => score >= t && !existing.includes(t));
+  if (!toUnlock.length) return;
+
+  const threshold = toUnlock[0]; // 一次只解鎖一個
+  await generateFragment(charId, threshold);
+}
+
+async function generateFragment(charId, threshold) {
+  const char = state.chars.find(c => c.id === charId);
+  if (!char) return;
+
+  const depthHint = FRAGMENT_DEPTH_HINTS[threshold] || '秘密碎片';
+  const existing = (state.fragments[charId] || []).map(f => f.theme).join('、');
+  const relLv = getRelLevel(charId);
+
+  // 決定碎片類型
+  const types = ['monologue','letter','memory','observation','confession'];
+  const typeLabels = { monologue:'內心獨白', letter:'未寄出的信', memory:'記憶碎片', observation:'偷偷觀察', confession:'心裡話' };
+  const chosenType = types[Math.floor(Math.random() * types.length)];
+
+  const prompt = `你是 ${char.name}。${(char.desc||'').slice(0,200)}
+目前和用戶的關係：${relLv.label}（好感度 ${threshold} 分里程碑）。
+${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
+
+請生成一個「${depthHint}」主題的私密碎片，類型為「${typeLabels[chosenType]}」。
+
+要求：
+- 以 ${char.name} 的第一人稱或第三人稱
+- 情感真實、細節具體，像是日記或私心話
+- 不超過 150 字
+- 要有令人心動或意外的細節
+- 符合「${depthHint}」這個主題方向
+
+只輸出碎片內容本身，不加任何標題或說明。`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.3, maxOutputTokens:2000} })
+    });
+    const data = await res.json();
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!content) return;
+
+    const fragment = {
+      id: uid(),
+      theme: depthHint,
+      type: chosenType,
+      typeLabel: typeLabels[chosenType],
+      content,
+      scoreThreshold: threshold,
+      unlockedAt: Date.now(),
+    };
+
+    if (!state.fragments[charId]) state.fragments[charId] = [];
+    state.fragments[charId].push(fragment);
+    await dbPut('fragments', { id: charId, data: state.fragments[charId] });
+
+    // 顯示解鎖通知
+    showFragmentUnlockNotice(char, fragment);
+  } catch(e) { /* silent */ }
+}
+
+function showFragmentUnlockNotice(char, fragment) {
+  document.getElementById('fragment-notice')?.remove();
+  const notice = document.createElement('div');
+  notice.id = 'fragment-notice';
+  notice.style.cssText = `
+    position:fixed; bottom:90px; left:50%; transform:translateX(-50%) translateY(20px);
+    z-index:9600; opacity:0;
+    background:rgba(255,255,255,0.98);
+    backdrop-filter:blur(24px);
+    border:1.5px solid rgba(201,184,232,0.5);
+    border-radius:24px;
+    padding:1.1rem 1.4rem;
+    min-width:260px; max-width:320px;
+    box-shadow:0 12px 40px rgba(180,160,210,0.35);
+    transition:all 0.45s cubic-bezier(0.34,1.56,0.64,1);
+    text-align:center;
+  `;
+  notice.innerHTML = `
+    <div style="font-size:1.6rem;margin-bottom:0.3rem;">🔮</div>
+    <div style="font-size:0.65rem;color:#a89bb5;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.3rem;">解鎖了新碎片</div>
+    <div style="font-size:0.95rem;font-weight:700;color:#3d3450;margin-bottom:0.15rem;">${char.name}的「${fragment.theme}」</div>
+    <div style="font-size:0.72rem;color:#6b5f7a;margin-bottom:0.8rem;">${fragment.typeLabel} · 好感度里程碑</div>
+    <div style="display:flex;gap:0.5rem;">
+      <button onclick="document.getElementById('fragment-notice').remove()" style="flex:1;padding:0.45rem;background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:12px;font-family:inherit;font-size:0.75rem;color:var(--text-mid);cursor:pointer;">稍後再看</button>
+      <button onclick="document.getElementById('fragment-notice').remove();switchPage('achievements');setTimeout(()=>openFragmentTab(),200)" style="flex:1;padding:0.45rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:12px;font-family:inherit;font-size:0.75rem;color:white;cursor:pointer;font-weight:500;">立刻查看 →</button>
+    </div>`;
+  document.body.appendChild(notice);
+  requestAnimationFrame(() => {
+    notice.style.transform = 'translateX(-50%) translateY(0)';
+    notice.style.opacity = '1';
+  });
+  setTimeout(() => {
+    notice.style.transform = 'translateX(-50%) translateY(10px)';
+    notice.style.opacity = '0';
+    setTimeout(() => notice.remove(), 400);
+  }, 8000);
+}
+
+function openFragmentTab() {
+  const tabs = document.querySelectorAll('.achievement-tab-btn');
+  tabs.forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.achievement-tab-content').forEach(c => c.classList.remove('active'));
+  const fragTab = document.getElementById('achievement-tab-fragment');
+  const fragContent = document.getElementById('achievement-content-fragment');
+  if (fragTab) fragTab.classList.add('active');
+  if (fragContent) fragContent.classList.add('active');
+  renderFragmentGallery();
+}
+
+function renderFragmentGallery() {
+  const sel = document.getElementById('achievement-char-select');
+  const charId = sel?.value;
+  const el = document.getElementById('fragment-gallery');
+  if (!el) return;
+  if (!charId) { el.innerHTML = '<div style="text-align:center;color:var(--text-light);padding:2rem">請先選擇角色</div>'; return; }
+
+  const char = state.chars.find(c => c.id === charId);
+  const fragments = state.fragments[charId] || [];
+  const rel = getRelData(charId);
+  const score = rel.score || 0;
+
+  // 顯示所有門檻（已解鎖 + 未解鎖）
+  const allThresholds = FRAGMENT_THRESHOLDS;
+  let html = `<div style="font-size:0.72rem;color:var(--text-light);margin-bottom:1rem;text-align:center;">好感度 ${score} · 已解鎖 ${fragments.length} / ${allThresholds.length} 碎片</div>`;
+  html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:0.8rem;">`;
+
+  allThresholds.forEach(threshold => {
+    const frag = fragments.find(f => f.scoreThreshold === threshold);
+    const depthHint = FRAGMENT_DEPTH_HINTS[threshold] || '碎片';
+    if (frag) {
+      html += `
+        <div class="fragment-card unlocked" onclick="showFragmentDetail('${charId}','${frag.id}')">
+          <div class="fragment-card-glow"></div>
+          <div style="font-size:1.4rem;margin-bottom:0.4rem;">🔮</div>
+          <div style="font-size:0.7rem;font-weight:700;color:#3d3450;margin-bottom:0.15rem;">${frag.theme}</div>
+          <div style="font-size:0.62rem;color:#a89bb5;">${frag.typeLabel}</div>
+          <div style="font-size:0.58rem;color:var(--lavender);margin-top:0.3rem;">好感 ${threshold}</div>
+        </div>`;
+    } else {
+      const pct = Math.min(100, Math.round((score / threshold) * 100));
+      html += `
+        <div class="fragment-card locked">
+          <div style="font-size:1.4rem;margin-bottom:0.4rem;filter:grayscale(1);opacity:0.4;">🔮</div>
+          <div style="font-size:0.7rem;font-weight:700;color:var(--text-light);margin-bottom:0.15rem;">${depthHint}</div>
+          <div style="font-size:0.58rem;color:var(--text-light);margin-top:0.3rem;">需好感 ${threshold}</div>
+          <div style="margin-top:0.4rem;height:3px;background:rgba(201,184,232,0.2);border-radius:2px;overflow:hidden;">
+            <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,var(--lavender),var(--milk-blue));border-radius:2px;"></div>
+          </div>
+        </div>`;
+    }
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function showFragmentDetail(charId, fragId) {
+  const frag = (state.fragments[charId] || []).find(f => f.id === fragId);
+  if (!frag) return;
+  const char = state.chars.find(c => c.id === charId);
+
+  document.getElementById('fragment-detail-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  overlay.id = 'fragment-detail-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="width:min(460px,94vw);max-height:85vh;overflow-y:auto;">
+      <div style="text-align:center;margin-bottom:1.2rem;">
+        <div style="font-size:2.5rem;margin-bottom:0.4rem;">🔮</div>
+        <div style="font-size:0.65rem;color:var(--text-light);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.3rem;">${char?.name || ''} 的碎片</div>
+        <div style="font-size:1.1rem;font-weight:700;color:var(--text-dark);margin-bottom:0.2rem;">${frag.theme}</div>
+        <div style="font-size:0.72rem;color:var(--lavender);">${frag.typeLabel} · 好感度 ${frag.scoreThreshold} 解鎖</div>
+      </div>
+      <div style="background:linear-gradient(135deg,rgba(201,184,232,0.08),rgba(184,212,232,0.08));border:1.5px solid rgba(201,184,232,0.25);border-radius:18px;padding:1.4rem;margin-bottom:1.2rem;">
+        <div style="font-size:0.88rem;color:var(--text-dark);line-height:1.9;white-space:pre-wrap;font-style:italic;">${frag.content}</div>
+      </div>
+      <div style="font-size:0.65rem;color:var(--text-light);text-align:center;margin-bottom:1rem;">${new Date(frag.unlockedAt).toLocaleDateString('zh-TW',{year:'numeric',month:'long',day:'numeric'})} 解鎖</div>
+      <div class="modal-actions">
+        <button class="modal-btn primary" onclick="document.getElementById('fragment-detail-overlay').remove()">關閉</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ─── 成就頁面 Moments 圖鑑渲染 ──────────────────────────
+function renderMomentsGallery() {
+  const sel = document.getElementById('achievement-char-select');
+  const charId = sel?.value;
+  const el = document.getElementById('moments-gallery');
+  if (!el) return;
+  if (!charId) { el.innerHTML = '<div style="text-align:center;color:var(--text-light);padding:2rem">請先選擇角色</div>'; return; }
+
+  const moments = state.moments[charId] || [];
+  if (!moments.length) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:3rem 1rem;">
+        <div style="font-size:2.5rem;margin-bottom:0.8rem;opacity:0.4;">✨</div>
+        <div style="font-size:0.85rem;color:var(--text-light);">還沒有特別時刻</div>
+        <div style="font-size:0.72rem;color:var(--text-light);margin-top:0.3rem;">繼續聊天，AI 會自動偵測並記錄特別的瞬間</div>
+      </div>`;
+    return;
+  }
+
+  let html = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:0.8rem;">`;
+  moments.slice().reverse().forEach(m => {
+    html += `
+      <div class="moment-card" onclick="showMomentDetail(${JSON.stringify(m).replace(/"/g,'&quot;')})">
+        <div style="font-size:2rem;margin-bottom:0.4rem;">${m.emoji}</div>
+        <div style="font-size:0.78rem;font-weight:700;color:var(--text-dark);margin-bottom:0.2rem;line-height:1.3;">${m.title}</div>
+        ${m.desc ? `<div style="font-size:0.65rem;color:var(--text-light);line-height:1.4;">${m.desc}</div>` : ''}
+        <div style="font-size:0.58rem;color:var(--text-light);margin-top:0.4rem;">${new Date(m.time).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'})}</div>
+      </div>`;
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function showMomentDetail(m) {
+  document.getElementById('moment-detail-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  overlay.id = 'moment-detail-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="width:min(380px,94vw);">
+      <div style="text-align:center;margin-bottom:1.2rem;">
+        <div style="font-size:3rem;margin-bottom:0.5rem;">${m.emoji}</div>
+        <div style="font-size:0.65rem;color:var(--text-light);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.3rem;">特別時刻</div>
+        <div style="font-size:1.1rem;font-weight:700;color:var(--text-dark);">${m.title}</div>
+      </div>
+      ${m.desc ? `<div style="background:var(--lavender-soft);border-radius:16px;padding:1.1rem;text-align:center;font-size:0.85rem;color:var(--text-mid);line-height:1.7;margin-bottom:1rem;">${m.desc}</div>` : ''}
+      <div style="font-size:0.65rem;color:var(--text-light);text-align:center;margin-bottom:1rem;">${new Date(m.time).toLocaleDateString('zh-TW',{year:'numeric',month:'long',day:'numeric'})}</div>
+      <div class="modal-actions">
+        <button class="modal-btn primary" onclick="document.getElementById('moment-detail-overlay').remove()">關閉</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
 // ─── PRESETS & SETTINGS ─────────────────────────────
 function onChatStyleChange(val) {
   const ta = document.getElementById('system-prompt-input');
@@ -4696,6 +5053,28 @@ function renderAchievementCharSelect() {
     : '<option value="">（尚無角色）</option>';
 }
 
+function switchAchievementTab(tab) {
+  document.querySelectorAll('.achievement-tab-btn').forEach(b => {
+    b.style.background = 'transparent';
+    b.style.color = 'var(--text-light)';
+    b.style.boxShadow = 'none';
+    b.style.fontWeight = '400';
+  });
+  document.querySelectorAll('.achievement-tab-content').forEach(c => c.style.display = 'none');
+  const activeBtn = document.getElementById('achievement-tab-' + tab);
+  const activeContent = document.getElementById('achievement-content-' + tab);
+  if (activeBtn) { activeBtn.style.background = 'white'; activeBtn.style.color = 'var(--text-dark)'; activeBtn.style.boxShadow = '0 1px 4px rgba(180,160,210,0.2)'; activeBtn.style.fontWeight = '600'; }
+  if (activeContent) activeContent.style.display = 'block';
+  if (tab === 'moments') renderMomentsGallery();
+  if (tab === 'fragment') renderFragmentGallery();
+}
+
+function onAchievementCharChange() {
+  renderAchievements();
+  renderMomentsGallery();
+  renderFragmentGallery();
+}
+
 function renderAchievements() {
   const sel = document.getElementById('achievement-char-select');
   const statsEl = document.getElementById('achievement-stats');
@@ -4746,6 +5125,8 @@ function renderAchievements() {
 async function refreshAchievements() {
   updateChatStatsCounts();
   renderAchievements();
+  renderMomentsGallery();
+  renderFragmentGallery();
   showToast('✓ 成就已更新');
 }
 

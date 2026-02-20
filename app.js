@@ -4230,7 +4230,7 @@ ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
 要求：
 - 以 ${char.name} 的第一人稱或第三人稱
 - 情感真實、細節具體，像是日記或私心話
-- 不超過 300 字
+- 不超過 500 字
 - 要有令人心動或意外的細節
 - 符合「${depthHint}」這個主題方向
 
@@ -4239,7 +4239,7 @@ ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.3, maxOutputTokens:3000} })
+      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.3, maxOutputTokens:4000} })
     });
     const data = await res.json();
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();

@@ -4091,7 +4091,7 @@ async function generateDailyTopics(charId, forceRegen = false) {
 }`;
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('memory')}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

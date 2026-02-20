@@ -4095,7 +4095,7 @@ async function generateDailyTopics(charId, forceRegen = false) {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.35, maxOutputTokens:800} })
+      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.35, maxOutputTokens:1800} })
     });
     const data = await res.json();
     let raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';

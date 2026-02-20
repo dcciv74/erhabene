@@ -1762,17 +1762,105 @@ body {
   cursor: pointer; transition: all 0.2s;
 }
 .moment-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(180,160,210,0.3); }
-.daily-topic-chip {
-  padding: 0.45rem 0.8rem;
-  background: rgba(201,184,232,0.12);
-  border: 1px solid rgba(201,184,232,0.28);
-  border-radius: 20px; font-size: 0.78rem;
-  color: var(--text-dark); cursor: pointer; transition: all 0.15s; line-height: 1.4;
-}
 .daily-topic-chip:hover { background: rgba(201,184,232,0.28); border-color: var(--lavender); }
 .achievement-tab-content { display: none; }
 .achievement-tab-content.active { display: block; }
 @keyframes fragmentPop { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ─── DAILY TOPICS BAR ─── */
+.daily-topics-bar {
+  padding: 0.7rem 1rem 0.6rem;
+  background: var(--lavender-soft);
+  border-top: 1px solid rgba(201,184,232,0.2);
+  border-bottom: 1px solid rgba(201,184,232,0.12);
+}
+.dt-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--lavender);
+  letter-spacing: 0.07em;
+}
+.dt-loading {
+  font-size: 0.78rem;
+  color: var(--text-light);
+  padding: 0.2rem 0;
+  font-style: italic;
+}
+.dt-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-light);
+  cursor: pointer;
+  font-size: 0.95rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 6px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.dt-close-btn:hover { color: var(--text-dark); }
+.dt-regen-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 6px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  line-height: 1;
+}
+.dt-regen-btn:hover { opacity: 1; }
+.daily-topic-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.5rem 0.8rem;
+  background: rgba(255,255,255,0.75);
+  border: 1px solid rgba(201,184,232,0.3);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.45;
+}
+.daily-topic-chip:hover {
+  background: rgba(201,184,232,0.2);
+  border-color: var(--lavender);
+  transform: translateX(2px);
+}
+.dt-chip-icon { font-size: 1rem; flex-shrink: 0; }
+.dt-chip-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--lavender);
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.04em;
+}
+.dt-chip-text {
+  font-size: 0.8rem;
+  color: var(--text-dark);
+  line-height: 1.45;
+}
+
+/* ─── DAILY TOPICS DARK MODE ─── */
+[data-theme="dark"] .daily-topics-bar {
+  background: rgba(30,26,42,0.97);
+  border-color: rgba(168,154,204,0.15);
+}
+[data-theme="dark"] .dt-title { color: #b8a8d8; }
+[data-theme="dark"] .dt-loading { color: #7a6e8a; }
+[data-theme="dark"] .dt-close-btn { color: #6a5e7a; }
+[data-theme="dark"] .dt-close-btn:hover { color: #b8a8d8; }
+[data-theme="dark"] .daily-topic-chip {
+  background: rgba(42,36,56,0.9);
+  border-color: rgba(168,154,204,0.2);
+}
+[data-theme="dark"] .daily-topic-chip:hover {
+  background: rgba(60,50,80,0.95);
+  border-color: rgba(168,154,204,0.5);
+}
+[data-theme="dark"] .dt-chip-text { color: #d4c8e8; }
+[data-theme="dark"] .dt-chip-label { color: #b8a0d8; }
 </style>
 </head>
 <body>
@@ -1884,8 +1972,6 @@ body {
       </div>
 
       <div id="input-area" style="display:none;">
-        <!-- 今日話題欄 -->
-        <div id="daily-topics-bar" style="display:none;padding:0.7rem 1rem 0.5rem;background:rgba(243,239,249,0.95);border-top:1px solid rgba(201,184,232,0.15);"></div>
         <div class="input-toolbar">
           <button class="toolbar-btn" onclick="triggerImageGen()" title="生成圖片">🖼️</button>
           <button class="toolbar-btn" onclick="document.getElementById('chat-img-upload').click()" title="上傳圖片">📷</button>
@@ -1894,8 +1980,11 @@ body {
           <button class="toolbar-btn" onclick="openModal('preset-modal')" title="Preset">📋</button>
           <button class="toolbar-btn" id="memory-toggle-btn" onclick="toggleMemoryPanel()" title="記憶">🧠</button>
           <button class="toolbar-btn" onclick="generateInnerVoice()" title="心聲 — 讀取角色此刻的內心想法">💭</button>
+          <button class="toolbar-btn" onclick="triggerDailyTopics()" title="今日話題">📰</button>
           <button class="toolbar-btn" onclick="openPacingModal()" title="節奏控制器" style="position:relative;">🎐<span id="pacing-badge" style="display:none;position:absolute;top:-4px;right:-6px;background:var(--lavender);color:white;font-size:0.45rem;padding:0.1rem 0.3rem;border-radius:6px;white-space:nowrap;font-weight:700;"></span></button>
         </div>
+        <!-- 今日話題欄 -->
+        <div id="daily-topics-bar" class="daily-topics-bar" style="display:none;"></div>
         <!-- Image preview strip -->
         <div id="chat-img-preview-strip" style="display:none;padding:0.4rem 0;display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;"></div>
         <div class="input-row">

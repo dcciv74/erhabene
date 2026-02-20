@@ -772,8 +772,14 @@ function openChat(chatId) {
   // 節奏 badge
   updatePacingBadge();
 
-  // 今日話題（延遲執行避免阻塞）
-  setTimeout(() => generateDailyTopics(char.id).then(() => renderDailyTopicsBar(char.id)), 1000);
+  // 今日話題欄：若今天已有快取就顯示，否則隱藏（等用戶手動按）
+  const todayKey = char.id + '_' + new Date().toDateString();
+  if (state.dailyTopics[todayKey]) {
+    renderDailyTopicsBar(char.id);
+  } else {
+    const bar = document.getElementById('daily-topics-bar');
+    if (bar) bar.style.display = 'none';
+  }
 
   // Send first message if empty
   if (chat.messages.length === 0 && char.firstMsg) {
@@ -4036,50 +4042,89 @@ function updatePacingBadge() {
 }
 
 // ─── 今日話題 ─────────────────────────────────────────
-async function generateDailyTopics(charId) {
+async function generateDailyTopics(charId, forceRegen = false) {
   const char = state.chars.find(c => c.id === charId);
-  if (!char || !state.apiKey) return;
+  if (!char || !state.apiKey) { showToast('需要先設定 API Key'); return; }
 
   const todayKey = charId + '_' + new Date().toDateString();
-  if (state.dailyTopics[todayKey]) return; // 今天已生成
 
-  const chat = state.chats.find(c => c.charId === charId);
-  const recentMsgs = chat ? chat.messages.slice(-6).map(m =>
-    `${m.role === 'user' ? '我' : char.name}: ${m.content}`).join('\n') : '';
+  // 有快取且不強制重生成 → 直接顯示
+  if (!forceRegen && state.dailyTopics[todayKey]?.question) {
+    renderDailyTopicsBar(charId);
+    return;
+  }
+
+  // 顯示 loading
+  const bar = document.getElementById('daily-topics-bar');
+  if (bar) {
+    bar.style.display = 'block';
+    bar.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.3rem;">
+        <div class="dt-title">✦ 今日話題</div>
+        <button onclick="closeDailyTopicsBar()" class="dt-close-btn">×</button>
+      </div>
+      <div class="dt-loading">✨ 正在生成今日話題…</div>`;
+  }
+
   const relLv = getRelLevel(charId);
-  const pacing = chat?.pacingMode || '';
-  const pacingLabels = { slow:'慢熱試探', pull:'甜蜜膠著', steady:'穩定交往', intense:'濃情密意', drama:'戲劇風暴' };
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  const weekday = ['週日','週一','週二','週三','週四','週五','週六'][now.getDay()];
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
 
-  const prompt = `你是一個戀愛助手。根據以下資訊，為用戶和 ${char.name} 生成今日互動建議。
+  const prompt = `你是一本戀愛主題的互動小雜誌，今天是 ${month}月${day}日（${weekday}${isWeekend?'，假日':''}）。
+讀者正在和一個關係是「${relLv.label}」的對象互動。
 
-角色：${char.name}
-角色描述：${(char.desc||'').slice(0,150)}
-關係階段：${relLv.label}
-${pacing ? `目前節奏：${pacingLabels[pacing]}` : ''}
-最近對話：
-${recentMsgs || '（尚無對話）'}
+請生成 3 則今日話題卡片，風格像輕薄的戀愛雜誌或 IG 互動媒體，每則都獨立、有趣、可以直接用來和對方互動。
 
-請生成 3 個建議，每個都要具體可行，符合現在的關係階段和節奏。
-回傳 JSON：
+必須各一種類型：
+1. 「相性一問」：一個有趣的問題，可以問對方（不一定要戀愛話題，例如：「你覺得男生什麼瞬間最帥？」「有沒有哪首歌你會跳過但某次意外聽完了？」「睡前最後一件事是什麼？」）
+2. 「今日情報」：一則跟近期日期/季節相關的有趣資訊（例如流星雨、新開的展覽/遊樂設施、季節性食物、星座運勢、某個都市傳說，可以是台灣或日本等地，可以適度虛構但要自然合理）
+3. 「今日儀式」：一個今天可以做的小行動（例如「傳一張你今天看到的天空給他」「今天說一句你平時說不出口的話」「睡前傳個晚安的同時附上今天最好笑的事」）
+
+回傳格式 JSON（只回傳 JSON，不加任何說明或 markdown）：
 {
-  "topic": "一個值得聊的話題（問句形式，讓用戶可以直接傳給對方）",
-  "activity": "一個可以一起做的事或互動（具體描述）",
-  "challenge": "一個今日小挑戰（例如：今天試著傳一張你今天看到的照片給他）"
-}
-只回傳 JSON，不加任何說明。`;
+  "question": { "icon": "emoji（1個）", "label": "相性一問", "text": "問題內容（30字以內）" },
+  "news":     { "icon": "emoji（1個）", "label": "今日情報", "text": "情報內容（40字以內）" },
+  "ritual":   { "icon": "emoji（1個）", "label": "今日儀式", "text": "行動內容（30字以內）" }
+}`;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
-    const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.1, maxOutputTokens:1500} })
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.35, maxOutputTokens:800} })
     });
     const data = await res.json();
     let raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
     raw = raw.replace(/```json|```/g,'').trim();
     const result = JSON.parse(raw);
+    if (!result.question) throw new Error('bad response');
     state.dailyTopics[todayKey] = { ...result, generatedAt: Date.now() };
     renderDailyTopicsBar(charId);
-  } catch(e) { /* silent */ }
+  } catch(e) {
+    if (bar) bar.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="dt-title">✦ 今日話題</div>
+        <button onclick="closeDailyTopicsBar()" class="dt-close-btn">×</button>
+      </div>
+      <div class="dt-loading">生成失敗，請重試 😢</div>`;
+  }
+}
+
+function closeDailyTopicsBar() {
+  const bar = document.getElementById('daily-topics-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+function triggerDailyTopics() {
+  if (!state.activeCharId) { showToast('請先開啟聊天視窗'); return; }
+  const bar = document.getElementById('daily-topics-bar');
+  // 若已顯示則收起
+  if (bar && bar.style.display !== 'none') { closeDailyTopicsBar(); return; }
+  generateDailyTopics(state.activeCharId);
 }
 
 function renderDailyTopicsBar(charId) {
@@ -4087,26 +4132,44 @@ function renderDailyTopicsBar(charId) {
   if (!bar) return;
   const todayKey = charId + '_' + new Date().toDateString();
   const topics = state.dailyTopics[todayKey];
-  if (!topics) {
-    bar.style.display = 'none';
-    return;
-  }
+  if (!topics?.question) { bar.style.display = 'none'; return; }
+
+  const cards = [topics.question, topics.news, topics.ritual].filter(Boolean);
+
   bar.style.display = 'block';
   bar.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;">
-      <div style="font-size:0.72rem;font-weight:600;color:var(--lavender);letter-spacing:0.05em;">✦ 今日話題</div>
-      <button onclick="document.getElementById('daily-topics-bar').style.display='none'" style="background:none;border:none;color:var(--text-light);cursor:pointer;font-size:0.85rem;padding:0;">×</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.55rem;">
+      <div class="dt-title">✦ 今日話題</div>
+      <div style="display:flex;gap:0.25rem;align-items:center;">
+        <button class="dt-regen-btn" onclick="generateDailyTopics('${charId}', true)" title="重新生成">🔄</button>
+        <button class="dt-close-btn" onclick="closeDailyTopicsBar()">×</button>
+      </div>
     </div>
-    <div style="display:flex;flex-direction:column;gap:0.35rem;">
-      ${topics.topic ? `<div class="daily-topic-chip" onclick="fillTopic(${JSON.stringify(topics.topic)})">💬 ${topics.topic}</div>` : ''}
-      ${topics.activity ? `<div class="daily-topic-chip" onclick="fillTopic(${JSON.stringify(topics.activity)})">🎯 ${topics.activity}</div>` : ''}
-      ${topics.challenge ? `<div class="daily-topic-chip" style="background:rgba(184,212,232,0.25);border-color:rgba(184,212,232,0.4);">⚡ ${topics.challenge}</div>` : ''}
+    <div style="display:flex;flex-direction:column;gap:0.35rem;" id="dt-chips">
+      ${cards.map((c, i) => `
+        <div class="daily-topic-chip" data-topic-idx="${i}">
+          <span class="dt-chip-icon">${c.icon || '✦'}</span>
+          <span class="dt-chip-label">${c.label}</span>
+          <span class="dt-chip-text">${c.text}</span>
+        </div>`).join('')}
     </div>`;
+
+  // 綁定點擊事件（避免 inline onclick + JSON.stringify 引號問題）
+  bar.querySelectorAll('.daily-topic-chip').forEach((chip, i) => {
+    chip.addEventListener('click', () => {
+      const text = cards[i]?.text;
+      if (text) fillTopic(text);
+    });
+  });
 }
 
 function fillTopic(text) {
   const input = document.getElementById('msg-input');
-  if (input) { input.value = text; input.focus(); autoResize(input); }
+  if (!input) return;
+  input.value = text;
+  input.focus();
+  autoResize(input);
+  closeDailyTopicsBar();
 }
 
 // ─── 碎片畫廊 (Fragment Gallery) ───────────────────────
@@ -4167,7 +4230,7 @@ ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
 要求：
 - 以 ${char.name} 的第一人稱或第三人稱
 - 情感真實、細節具體，像是日記或私心話
-- 不超過 300 字
+- 不超過 150 字
 - 要有令人心動或意外的細節
 - 符合「${depthHint}」這個主題方向
 

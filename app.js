@@ -4095,7 +4095,7 @@ async function generateDailyTopics(charId, forceRegen = false) {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.35, maxOutputTokens:1800} })
+      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.35, maxOutputTokens:2800} })
     });
     const data = await res.json();
     let raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
@@ -4239,7 +4239,7 @@ ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.3, maxOutputTokens:2000} })
+      body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:1.3, maxOutputTokens:3000} })
     });
     const data = await res.json();
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();

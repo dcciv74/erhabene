@@ -1982,6 +1982,7 @@ body {
           <button class="toolbar-btn" onclick="generateInnerVoice()" title="心聲 — 讀取角色此刻的內心想法">💭</button>
           <button class="toolbar-btn" onclick="triggerDailyTopics()" title="今日話題">📰</button>
           <button class="toolbar-btn" onclick="openPacingModal()" title="節奏控制器" style="position:relative;">🎐<span id="pacing-badge" style="display:none;position:absolute;top:-4px;right:-6px;background:var(--lavender);color:white;font-size:0.45rem;padding:0.1rem 0.3rem;border-radius:6px;white-space:nowrap;font-weight:700;"></span></button>
+          <button class="toolbar-btn" onclick="triggerDailyReport()" title="每日早報">🗞️</button>
         </div>
         <!-- 今日話題欄 -->
         <div id="daily-topics-bar" class="daily-topics-bar" style="display:none;"></div>
@@ -2600,7 +2601,7 @@ body {
     <div class="modal-title">🖼️ 生成圖片</div>
     <div class="modal-field">
       <label class="modal-label">構圖類型</label>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;" id="imagegen-type-picker">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.5rem;" id="imagegen-type-picker">
         <button class="imagegen-type-btn active" data-type="solo" onclick="selectImageGenType('solo',this)">
           <div style="font-size:1.4rem;margin-bottom:0.3rem;">👤</div>
           <div style="font-size:0.82rem;font-weight:500;">角色獨照</div>
@@ -2608,6 +2609,10 @@ body {
         <button class="imagegen-type-btn" data-type="duo" onclick="selectImageGenType('duo',this)">
           <div style="font-size:1.4rem;margin-bottom:0.3rem;">👥</div>
           <div style="font-size:0.82rem;font-weight:500;">雙人合照</div>
+        </button>
+        <button class="imagegen-type-btn" data-type="scene" onclick="selectImageGenType('scene',this)">
+          <div style="font-size:1.4rem;margin-bottom:0.3rem;">🌅</div>
+          <div style="font-size:0.82rem;font-weight:500;">純場景</div>
         </button>
       </div>
     </div>

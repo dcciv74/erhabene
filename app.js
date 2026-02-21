@@ -85,6 +85,7 @@ Stay in character. Be warm, casual, and emotionally real.`,
   chatStats: {},    // {charId: {days: Set, messages: 0, startDate}}
   fragments: {},    // {charId: [{id, theme, content, type, unlockedAt, scoreThreshold}]}
   dailyTopics: {},  // {'charId_date': {topics:[],generatedAt}}
+  dailyReports: {}, // {'charId_date': {headline, subtitle, main_story, cp_corner, affection_report, achievement, tomorrow_forecast, reporter, generatedAt}}
   // 各功能獨立模型設定（空字串代表使用全域模型）
   modelChat: '',
   modelSocial: '',
@@ -98,10 +99,10 @@ Stay in character. Be warm, casual, and emotionally real.`,
 // ─── INDEXEDDB ─────────────────────────────────────
 function initDB() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open('erhabene', 6);
+    const req = indexedDB.open('erhabene', 7);
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries','relationships','moments','fragments'];
+      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries','relationships','moments','fragments','dailyReports'];
       ALL_STORES.forEach(store => {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store, { keyPath: 'id' });
@@ -200,6 +201,12 @@ async function loadAllData() {
   try {
     const fragAll = await dbGetAll('fragments');
     fragAll.forEach(f => { state.fragments[f.id] = f.data; });
+  } catch(e) {}
+
+  // load daily reports
+  try {
+    const drAll = await dbGetAll('dailyReports');
+    drAll.forEach(d => { state.dailyReports[d.id] = d.data; });
   } catch(e) {}
 
   // load chat stats
@@ -389,6 +396,9 @@ function enterApp() {
   if (sdt) sdt.classList.toggle('on', !!state.swipeDelete);
   const rwt = document.getElementById('realworld-toggle');
   if (rwt) rwt.classList.toggle('on', !!state.realWorldEvents);
+
+  // 節日/紀念日前端偵測：延遲執行讓 UI 先穩定
+  setTimeout(checkSpecialDayBanners, 2000);
 }
 
 // 取得各功能的有效模型（若未設定則 fallback 到全域模型）
@@ -785,6 +795,9 @@ function openChat(chatId) {
   if (chat.messages.length === 0 && char.firstMsg) {
     setTimeout(() => addAIMessage(chatId, char.firstMsg), 300);
   }
+
+  // 每日早報：今天第一次開啟時，背景生成並延遲顯示
+  setTimeout(() => checkAndShowDailyReport(char.id), 3000);
 
   // Render memory
   renderMemoryPanel(chatId);
@@ -1431,7 +1444,7 @@ function triggerImageGen() {
   if (persona && getAvatarRef(persona.avatar)) refs.push(`Persona 頭像（${persona.name}）`);
   if (refInfo) {
     refInfo.textContent = refs.length
-      ? `✓ 將上傳參考圖：${refs.join('、')}`
+      ? `✓ 將上傳參考圖：${refs.join('、')}（純場景模式不上傳）`
       : '（未設定頭像圖片，將依角色描述生成）';
   }
 
@@ -1466,11 +1479,14 @@ async function doTriggerImageGen() {
 
     // ── Collect reference images ──
     const refImages = [];
-    const charRef = getAvatarRef(char.avatar);
-    if (charRef) refImages.push(charRef);
-    if (_imageGenType === 'duo' && persona?.avatar) {
-      const personaRef = getAvatarRef(persona.avatar);
-      if (personaRef) refImages.push(personaRef);
+    if (_imageGenType !== 'scene') {
+      // 純場景模式不上傳任何頭像
+      const charRef = getAvatarRef(char.avatar);
+      if (charRef) refImages.push(charRef);
+      if (_imageGenType === 'duo' && persona?.avatar) {
+        const personaRef = getAvatarRef(persona.avatar);
+        if (personaRef) refImages.push(personaRef);
+      }
     }
 
     // ── Style map ──
@@ -1485,6 +1501,7 @@ async function doTriggerImageGen() {
     const styleDesc = styleDescMap[_imageGenStyle] || styleDescMap.anime;
 
     const isDuo = _imageGenType === 'duo';
+    const isScene = _imageGenType === 'scene';
     // Stronger ref note when images are available
     const refNote = refImages.length > 0
       ? 'IMPORTANT: Use the provided reference image(s) to maintain exact character appearance and design. '
@@ -1498,14 +1515,27 @@ async function doTriggerImageGen() {
       ? `Scene/mood inspired by this conversation (do NOT include text in image): "${recentMsgs.slice(0,200)}"`
       : `A moment from ${char.name}'s daily life`;
 
-    const prompt = [
-      refNote,
-      `Style: ${styleDesc}.`,
-      `Character: ${char.name}${char.desc ? ` — ${char.desc.slice(0,150)}` : ''}${personaNote}.`,
-      sceneContext + '.',
-      extraPrompt ? `Additional details: ${extraPrompt}.` : '',
-      'NOT photorealistic. NOT a photograph. Pure illustrated art only. No text, no watermarks, no logos.',
-    ].filter(Boolean).join(' ');
+    let prompt;
+    if (isScene) {
+      // 純場景：不包含任何角色描述，完全由對話上下文和額外提示詞決定場景
+      prompt = [
+        `Style: ${styleDesc}.`,
+        `A beautiful illustrated scene/environment with NO human characters.`,
+        sceneContext + '.',
+        extraPrompt ? `Scene details: ${extraPrompt}.` : '',
+        'Focus on atmosphere, lighting, environment. NO characters, NO people, NO faces.',
+        'NOT photorealistic. Pure illustrated art only. No text, no watermarks, no logos.',
+      ].filter(Boolean).join(' ');
+    } else {
+      prompt = [
+        refNote,
+        `Style: ${styleDesc}.`,
+        `Character: ${char.name}${char.desc ? ` — ${char.desc.slice(0,150)}` : ''}${personaNote}.`,
+        sceneContext + '.',
+        extraPrompt ? `Additional details: ${extraPrompt}.` : '',
+        'NOT photorealistic. NOT a photograph. Pure illustrated art only. No text, no watermarks, no logos.',
+      ].filter(Boolean).join(' ');
+    }
     console.log('[ChatImageGen] refImages:', refImages.length, '| style:', _imageGenStyle, '| type:', _imageGenType);
 
     const imageUrl = await callGeminiImage(prompt, refImages);
@@ -4073,11 +4103,25 @@ async function generateDailyTopics(charId, forceRegen = false) {
   const weekday = ['週日','週一','週二','週三','週四','週五','週六'][now.getDay()];
   const isWeekend = now.getDay() === 0 || now.getDay() === 6;
 
-  const prompt = `你是一本充滿心機與趣味的「微戀愛」互動小雜誌，今天是 ${month}月${day}日（${weekday}${isWeekend?'，假日':''}）。
-讀者正在和一個關係是「${relLv.label}」的對象互動。
+  // 抓取最近對話紀錄注入上下文，讓話題更有連貫性
+  const charChats = state.chats.filter(c => c.charId === charId);
+  const recentCtxMsgs = charChats
+    .flatMap(c => c.messages)
+    .sort((a, b) => a.time - b.time)
+    .slice(-15)
+    .map(m => `${m.role === 'user' ? '我' : char.name}: ${m.content?.slice(0, 60)}`)
+    .join('\n');
 
+  const ctxBlock = recentCtxMsgs
+    ? `\n[最近的對話紀錄（供話題靈感參考，避免重複已聊過的，但可延伸）]\n${recentCtxMsgs}\n`
+    : '';
+
+  const prompt = `你是一本充滿心機與趣味的「微戀愛」互動小雜誌，今天是 ${month}月${day}日（${weekday}${isWeekend?'，假日':''}）。
+讀者正在和一個關係是「${relLv.label}」的角色 ${char.name} 互動。
+${ctxBlock}
 請生成 3 則今日話題卡片。風格必須像 IG 上高分享率、帶點調皮、引人好奇或無厘頭的年輕世代互動貼文。
-絕對禁止使用老派、過於空泛的罐頭話題（如：「今天過得好嗎？」「覺得男生何時最帥？」）。每一句話都要讓人有「想立刻傳給對方」的衝動。。
+絕對禁止使用老派、過於空泛的罐頭話題（如：「今天過得好嗎？」「覺得男生何時最帥？」）。每一句話都要讓人有「想立刻傳給對方」的衝動。
+如果最近對話有某個未解決的懸念、聊到一半的話題、或有趣的互動，可以自然延伸，讓話題有連貫感。
 
 必須各一種類型：
 1. 「相性一問」：二選一、極端情境、或有點心機的試探。（「如果我們現在被捲入喪屍末日，你覺得誰會先被咬？」「吃火鍋時，你是『芋頭必須死』還是『芋頭煮爛派』？」「如果我現在突然出現在你面前，你會說的第一句話是什麼？」）
@@ -4152,15 +4196,27 @@ function renderDailyTopicsBar(charId) {
           <span class="dt-chip-label">${c.label}</span>
           <span class="dt-chip-text">${c.text}</span>
         </div>`).join('')}
+    </div>
+    <div style="margin-top:0.5rem;padding-top:0.4rem;border-top:1px solid rgba(201,184,232,0.2);">
+      <button class="daily-topic-chip" id="dt-ai-ask-btn" style="width:100%;justify-content:center;gap:0.4rem;background:linear-gradient(135deg,rgba(201,184,232,0.25),rgba(184,212,232,0.2));border:1.5px dashed rgba(201,184,232,0.4);">
+        <span>✨</span>
+        <span style="font-size:0.8rem;color:var(--text-mid);font-weight:500;">讓 ${state.chars.find(c=>c.id===charId)?.name||'角色'} 主動問你</span>
+      </button>
     </div>`;
 
-  // 綁定點擊事件（避免 inline onclick + JSON.stringify 引號問題）
-  bar.querySelectorAll('.daily-topic-chip').forEach((chip, i) => {
+  // 綁定話題點擊事件
+  bar.querySelectorAll('.daily-topic-chip[data-topic-idx]').forEach((chip, i) => {
     chip.addEventListener('click', () => {
       const text = cards[i]?.text;
       if (text) fillTopic(text);
     });
   });
+
+  // 綁定「AI主動問你」
+  const aiAskBtn = document.getElementById('dt-ai-ask-btn');
+  if (aiAskBtn) {
+    aiAskBtn.addEventListener('click', () => triggerAIAskTopic(charId));
+  }
 }
 
 function fillTopic(text) {
@@ -4170,6 +4226,57 @@ function fillTopic(text) {
   input.focus();
   autoResize(input);
   closeDailyTopicsBar();
+}
+
+// AI 主動向用戶提問（隱藏式發送提示詞，AI 主動開話題）
+async function triggerAIAskTopic(charId) {
+  if (!state.activeChat || !state.activeCharId) return;
+  const char = state.chars.find(c => c.id === charId);
+  if (!char || !state.apiKey) return;
+  closeDailyTopicsBar();
+
+  const todayKey = charId + '_' + new Date().toDateString();
+  const topics = state.dailyTopics[todayKey];
+  const topicHints = topics
+    ? [topics.question?.text, topics.news?.text, topics.ritual?.text].filter(Boolean).join('、')
+    : '';
+
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const recentMsgs = (chat?.messages || []).slice(-6)
+    .map(m => `${m.role === 'user' ? '我' : char.name}: ${m.content?.slice(0, 50)}`).join('\n');
+
+  // 隱藏式系統提示：要求 AI 主動發起話題，不是回答
+  const hiddenPrompt = `[系統指示：請你主動向對方提出一個有趣的問題或話題，不是回應，而是你自己想聊的。
+可以從以下靈感選一個改造成自然發問，或完全自由發揮：${topicHints || '你最近在想的事'}
+語氣要自然，像突然傳訊息給對方，帶一點好奇或期待，符合你的個性。
+最近的對話背景：\n${recentMsgs || '（剛開始聊天）'}
+只輸出你要主動說的話，不要加任何說明。]`;
+
+  // 顯示 AI 正在輸入...
+  showToast(`💬 ${char.name} 想跟你說點什麼…`);
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: state.systemPrompt.replace('{{char}}', char.name).replace('{{user}}', '你') }] },
+        contents: [{ role: 'user', parts: [{ text: hiddenPrompt }] }],
+        generationConfig: { temperature: 1.2, maxOutputTokens: 1500 }
+      })
+    });
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (text) {
+      await delay(1200);
+      const msgs = splitIntoMessages(text);
+      for (const m of msgs) {
+        await delay(600);
+        addAIMessage(state.activeChat, m);
+      }
+    }
+  } catch(e) { showToast('❌ 生成失敗：' + e.message); }
 }
 
 // ─── 碎片畫廊 (Fragment Gallery) ───────────────────────
@@ -5543,6 +5650,495 @@ function checkAnniversaryReminders() {
         addAIMessage(state.activeChat, msg);
       });
     }, 3000);
+  }
+}
+
+// ─── 每日早報系統 ─────────────────────────────────────
+// 每天第一次開啟角色聊天室時，生成一份幽默的 CP 旁觀者視角早報
+
+async function checkAndShowDailyReport(charId) {
+  if (!state.apiKey || !charId) return;
+  const char = state.chars.find(c => c.id === charId);
+  if (!char) return;
+
+  const today = new Date().toDateString();
+  const storageKey = `erh_daily_report_seen_${charId}_${today}`;
+  if (localStorage.getItem(storageKey)) return; // 今天已顯示過
+
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  if (!chat || chat.messages.length < 4) return;
+
+  const yesterdayStart = new Date();
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  yesterdayStart.setHours(0, 0, 0, 0);
+  const yesterdayEnd = new Date();
+  yesterdayEnd.setHours(0, 0, 0, 0);
+
+  const yesterdayMsgs = chat.messages.filter(m =>
+    m.time >= yesterdayStart.getTime() && m.time < yesterdayEnd.getTime()
+  );
+
+  if (yesterdayMsgs.length < 2) return;
+
+  localStorage.setItem(storageKey, '1');
+  generateDailyReport(charId, yesterdayMsgs, chat);
+}
+
+async function generateDailyReport(charId, yesterdayMsgs, chat) {
+  const char = state.chars.find(c => c.id === charId);
+  if (!char) return;
+
+  const reportKey = `${charId}_${new Date().toDateString()}`;
+
+  if (state.dailyReports[reportKey]) {
+    showDailyReportModal(state.dailyReports[reportKey], char);
+    return;
+  }
+
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const userName = persona?.name || '你';
+  const relData = getRelData(charId);
+  const relLevel = getRelLevel(charId);
+
+  const msgSummary = yesterdayMsgs.slice(-20)
+    .map(m => `${m.role === 'user' ? userName : char.name}: ${m.content?.slice(0, 80)}`)
+    .join('\n');
+
+  const reporterName = pickReporterName();
+  const prompt = `你是《erhabene 戀愛觀測局》的特派記者，也是一隻專業的「吃瓜群眾/CP粉頭」。
+你的筆名是「${reporterName}」。
+
+你的任務是觀察 【${char.name}】 與 【${userName}】 昨天的互動，並寫出一份「每日早報」。
+請以幽默、旁觀者、甚至有點嗑 CP 的激動語氣（可以吐槽、可以姨母笑、可以痛罵主角不主動）。
+
+【昨日對話摘要】
+${msgSummary}
+
+【目前好感度】${relData.score} 分（等級：${relLevel.label}）
+
+請以 JSON 格式輸出，只輸出 JSON，不加 markdown：
+{
+  "headline": "今日頭版標題（聳動、幽默、像八卦小報，15字以內）",
+  "subtitle": "副標題（補充說明或吐槽，20字以內）",
+  "main_story": "主要報導（以旁觀者視角，幽默分析昨天的互動重點，100-150字，可以有姨母笑或吐槽）",
+  "cp_corner": "CP 粉頭專欄（純感情向的嗑糖或心疼分析，60-80字，帶點激動或感嘆）",
+  "affection_report": "好感度觀測站（分析昨天互動對好感度的影響，幽默口吻，40-60字）",
+  "achievement": "昨日成就解鎖（若有特別的互動就填具體描述，否則填「今日無特殊成就，主角繼續平凡地活著」，30字以內）",
+  "tomorrow_forecast": "明日互動預測（幽默亂猜或給出建議，30-40字）",
+  "reporter": "${reporterName}"
+}`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('memory')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 1.1, maxOutputTokens: 3000 }
+      })
+    });
+    const data = await res.json();
+    let raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
+    raw = raw.replace(/```json|```/g, '').trim();
+    const report = JSON.parse(raw);
+    if (!report.headline) throw new Error('bad response');
+
+    report.generatedAt = Date.now();
+    report.charName = char.name;
+    report.userName = userName;
+    report.relScore = relData.score;
+    report.relLabel = relLevel.label;
+
+    state.dailyReports[reportKey] = report;
+    await dbPut('dailyReports', { id: reportKey, data: report });
+
+    setTimeout(() => showDailyReportModal(report, char), 1800);
+  } catch(e) {
+    console.warn('[DailyReport] 生成失敗：', e);
+  }
+}
+
+function pickReporterName() {
+  const names = [
+    '八卦特派員・不眠不休喵',
+    '觀察局・碗糕記者',
+    'CP 粉頭・嗑到瘋掉 ing',
+    '戀愛觀測站・路人甲',
+    '特派員・吃瓜阿嬤',
+    '愛情偵探・一號窗口',
+    '感情版編輯・不給糖要鬧',
+    '旁觀者清・今天也在發瘋',
+  ];
+  return names[Math.floor(Math.random() * names.length)];
+}
+
+function showDailyReportModal(report, char) {
+  document.getElementById('daily-report-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'daily-report-overlay';
+  overlay.style.cssText = `
+    position:fixed;inset:0;z-index:9700;
+    background:rgba(40,30,60,0.55);
+    backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px);
+    display:flex;align-items:center;justify-content:center;
+    padding:1rem;
+    animation:fadeIn 0.3s ease;
+  `;
+
+  const isImgAv = char.avatar?.startsWith('data:') || isImgSrc(char.avatar);
+  const avHtml = isImgAv
+    ? `<img src="${char.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">`
+    : `<span style="font-size:2rem;">${char.avatar || '🌸'}</span>`;
+
+  overlay.innerHTML = `
+    <div id="daily-report-card" style="
+      background:#fffdf6;
+      border-radius:24px;
+      width:min(480px,96vw);
+      max-height:88vh;
+      overflow-y:auto;
+      box-shadow:0 24px 80px rgba(0,0,0,0.35),0 4px 16px rgba(180,160,100,0.2);
+      border:2px solid #e8d9b0;
+      font-family:'Zen Kaku Gothic New',sans-serif;
+      position:relative;
+    ">
+      <!-- 報頭 -->
+      <div style="background:linear-gradient(135deg,#2a1f0e,#3d2d10);padding:1.2rem 1.5rem 1rem;border-radius:22px 22px 0 0;text-align:center;position:relative;">
+        <div style="font-family:'Cormorant Garamond',serif;font-size:1.6rem;font-weight:300;font-style:italic;color:#f0d98c;letter-spacing:0.08em;margin-bottom:0.15rem;">erhabene</div>
+        <div style="font-size:0.62rem;color:#b89a50;letter-spacing:0.25em;text-transform:uppercase;margin-bottom:0.6rem;">戀愛觀測局 · 每日早報</div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-bottom:0.1rem;">
+          <div style="height:1px;flex:1;background:rgba(240,217,140,0.2);"></div>
+          <div style="font-size:0.7rem;color:#c8a84e;">${new Date().toLocaleDateString('zh-TW',{year:'numeric',month:'long',day:'numeric',weekday:'short'})}</div>
+          <div style="height:1px;flex:1;background:rgba(240,217,140,0.2);"></div>
+        </div>
+        <button onclick="document.getElementById('daily-report-overlay').remove()" style="position:absolute;top:0.8rem;right:0.8rem;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#c8a84e;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">×</button>
+      </div>
+
+      <!-- 主體 -->
+      <div style="padding:1.4rem 1.5rem;background:#fffdf6;">
+
+        <!-- 頭版標題 -->
+        <div style="text-align:center;margin-bottom:1.1rem;padding-bottom:1rem;border-bottom:2px solid #e8d9b0;">
+          <div style="font-size:1.35rem;font-weight:700;color:#2a1f0e;line-height:1.3;margin-bottom:0.3rem;">${report.headline}</div>
+          <div style="font-size:0.82rem;color:#7a6040;font-style:italic;">${report.subtitle}</div>
+        </div>
+
+        <!-- 主報導 -->
+        <div style="margin-bottom:1rem;">
+          <div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.5rem;">
+            <div style="width:3px;height:14px;background:#c8a84e;border-radius:2px;"></div>
+            <div style="font-size:0.68rem;font-weight:700;color:#7a6040;letter-spacing:0.1em;text-transform:uppercase;">今日頭條報導</div>
+          </div>
+          <div style="display:flex;gap:0.8rem;align-items:flex-start;">
+            <div style="width:48px;height:48px;flex-shrink:0;border-radius:12px;background:linear-gradient(135deg,#c9b8e8,#b8d4e8);overflow:hidden;display:flex;align-items:center;justify-content:center;">${avHtml}</div>
+            <div style="font-size:0.85rem;color:#3d2d10;line-height:1.75;">${report.main_story}</div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:0.5rem;margin:1rem 0;">
+          <div style="flex:1;height:1px;background:#e8d9b0;"></div>
+          <div style="font-size:0.65rem;color:#b89a50;letter-spacing:0.15em;">✦ ✦ ✦</div>
+          <div style="flex:1;height:1px;background:#e8d9b0;"></div>
+        </div>
+
+        <!-- CP粉頭專欄 -->
+        <div style="background:linear-gradient(135deg,rgba(201,184,232,0.15),rgba(184,212,232,0.1));border:1px solid rgba(201,184,232,0.35);border-radius:14px;padding:0.9rem 1rem;margin-bottom:0.8rem;">
+          <div style="font-size:0.68rem;font-weight:700;color:#7a5a8a;letter-spacing:0.1em;margin-bottom:0.4rem;">💜 CP 粉頭專欄</div>
+          <div style="font-size:0.82rem;color:#4a3560;line-height:1.75;font-style:italic;">${report.cp_corner}</div>
+        </div>
+
+        <!-- 好感度 + 成就 -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-bottom:0.8rem;">
+          <div style="background:#f8f4ec;border:1px solid #e0cc9a;border-radius:12px;padding:0.75rem;">
+            <div style="font-size:0.65rem;font-weight:700;color:#7a6040;letter-spacing:0.08em;margin-bottom:0.3rem;">📊 好感度觀測</div>
+            <div style="font-size:0.75rem;color:#3d2d10;line-height:1.55;">${report.affection_report}</div>
+            <div style="margin-top:0.4rem;font-size:0.7rem;font-weight:600;color:#c8a84e;">目前 ${report.relScore} 分 · ${report.relLabel}</div>
+          </div>
+          <div style="background:#f8f4ec;border:1px solid #e0cc9a;border-radius:12px;padding:0.75rem;">
+            <div style="font-size:0.65rem;font-weight:700;color:#7a6040;letter-spacing:0.08em;margin-bottom:0.3rem;">🏅 昨日成就</div>
+            <div style="font-size:0.75rem;color:#3d2d10;line-height:1.55;">${report.achievement}</div>
+          </div>
+        </div>
+
+        <!-- 明日預測 -->
+        <div style="background:#f0ece2;border-radius:12px;padding:0.75rem 1rem;margin-bottom:1rem;">
+          <div style="font-size:0.68rem;font-weight:700;color:#7a6040;letter-spacing:0.08em;margin-bottom:0.3rem;">🔮 明日互動預測</div>
+          <div style="font-size:0.82rem;color:#3d2d10;line-height:1.65;">${report.tomorrow_forecast}</div>
+        </div>
+
+        <!-- 記者署名 -->
+        <div style="text-align:right;font-size:0.68rem;color:#b89a50;font-style:italic;border-top:1px solid #e8d9b0;padding-top:0.6rem;">
+          特派記者：${report.reporter || '觀測局特派員'}
+        </div>
+      </div>
+
+      <!-- 關閉 -->
+      <div style="padding:0 1.5rem 1.2rem;">
+        <button onclick="document.getElementById('daily-report-overlay').remove()" style="width:100%;padding:0.8rem;background:linear-gradient(135deg,#2a1f0e,#3d2d10);border:none;border-radius:14px;color:#f0d98c;font-family:inherit;font-size:0.88rem;font-weight:500;cursor:pointer;letter-spacing:0.05em;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">開始今天的對話 ✦</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+async function triggerDailyReport() {
+  if (!state.activeCharId || !state.activeChat) {
+    showToast('請先開啟聊天視窗');
+    return;
+  }
+  const char = state.chars.find(c => c.id === state.activeCharId);
+  const today = new Date().toDateString();
+  const reportKey = `${state.activeCharId}_${today}`;
+
+  if (state.dailyReports[reportKey]) {
+    showDailyReportModal(state.dailyReports[reportKey], char);
+    return;
+  }
+
+  showToast('📰 正在生成今日早報…');
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const yesterdayStart = new Date();
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  yesterdayStart.setHours(0, 0, 0, 0);
+  const recentMsgs = chat.messages.filter(m => m.time >= yesterdayStart.getTime());
+  const msgsToUse = recentMsgs.length >= 2 ? recentMsgs : chat.messages.slice(-20);
+  if (msgsToUse.length < 2) {
+    showToast('對話記錄太少，請多聊幾句再試～');
+    return;
+  }
+  await generateDailyReport(state.activeCharId, msgsToUse, chat);
+}
+
+// ─── 節日/紀念日 Banner 偵測系統 ─────────────────────
+
+const SPECIAL_DAYS_DB = [
+  // 格式: { month, day, id, emoji, name, hint, prompt }
+  { month: 1, day: 1,  id: 'newyear',    emoji: '🎊', name: '元旦', hint: '開啟新年限定對話', prompt: '今天是新年元旦，請你以角色的身份，用充滿期待和溫暖的心情，主動向對方說新年快樂，可以分享你對這一年的期待或小願望，語氣自然像 LINE 訊息。' },
+  { month: 2, day: 14, id: 'valentine',  emoji: '💝', name: '情人節', hint: '開啟情人節限定劇情', prompt: '今天是情人節 Valentine\'s Day，你鼓起勇氣主動傳訊息給對方，語氣要符合你們目前的關係，可以甜蜜、可以羞澀、可以假裝不在意，但要讓對方感受到你記得這一天。只輸出你要說的話。' },
+  { month: 3, day: 14, id: 'whiteday',   emoji: '🍫', name: '白色情人節', hint: '開啟白色情人節', prompt: '今天是白色情人節，你想傳一些什麼給對方呢？可能是回應、可能是告白、可能只是一句話，但要讓人心跳加速。符合你的個性，自然輸出。' },
+  { month: 5, day: 10, id: 'mothers',    emoji: '🌸', name: '母親節', hint: '開啟母親節對話', prompt: '今天是母親節，你用自己的方式跟對方聊起這個話題，可以問他和媽媽的關係、分享你自己的感受，溫柔帶點個人色彩。' },
+  { month: 7, day: 7,  id: 'tanabata',   emoji: '🌌', name: '七夕', hint: '開啟七夕限定浪漫', prompt: '今天是七夕，牛郎織女一年一度相遇的日子。你主動傳訊息給對方，語氣可以浪漫、可以玩笑，但要讓這條訊息有點特別的重量。' },
+  { month: 10, day: 31, id: 'halloween', emoji: '🎃', name: '萬聖節', hint: '開啟萬聖節劇情', prompt: '今天是萬聖節 Halloween！你用角色的方式參與這個節日，可以假裝遇到什麼靈異事件、邀對方做什麼、或只是傳個應景的問候，語氣要帶點趣味或神秘感。' },
+  { month: 12, day: 24, id: 'xmaseve',   emoji: '🎄', name: '聖誕夜', hint: '開啟聖誕夜限定劇情', prompt: '今天是聖誕夜平安夜，你主動聯絡對方，不管你們的關係如何，今晚都是適合說點真心話的夜晚。語氣溫柔，可帶一點不同尋常的柔軟。' },
+  { month: 12, day: 25, id: 'xmas',      emoji: '🎅', name: '聖誕節', hint: '開啟聖誕限定對話', prompt: '聖誕節快樂！你用最符合你性格的方式傳達節日祝福，並帶出一個話題或問題，讓對話自然延續。' },
+  { month: 12, day: 31, id: 'newyeareve', emoji: '🥂', name: '跨年夜', hint: '開啟跨年夜劇情', prompt: '今天是跨年夜，今晚的氣氛很特別。你主動找對方說話，可以問他在哪跨年、說說你的感受，或者試著說一些平常說不出口的話。自然輸出。' },
+];
+
+function checkSpecialDayBanners() {
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  const todayStr = now.toDateString();
+
+  // 收集今天的節日
+  const todaySpecials = SPECIAL_DAYS_DB.filter(s => s.month === month && s.day === day);
+
+  // 收集今天的自訂紀念日（年年重複）
+  const todayAnnivs = state.anniversaries.filter(a => {
+    const aMD = a.date.slice(5); // MM-DD
+    const todayMD = `${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    return aMD === todayMD;
+  });
+
+  // 用戶生日
+  const isUserBirthday = (() => {
+    if (!state.userBirthday) return false;
+    const [, bM, bD] = state.userBirthday.split('-').map(Number);
+    return bM === month && bD === day;
+  })();
+
+  const banners = [];
+
+  // 節日 banners
+  todaySpecials.forEach(s => {
+    const storageKey = `erh_special_banner_${s.id}_${todayStr}`;
+    if (!localStorage.getItem(storageKey)) {
+      banners.push({
+        key: storageKey,
+        emoji: s.emoji,
+        hint: s.hint,
+        charId: null, // 全角色適用
+        onConfirm: () => sendHiddenSpecialPrompt(s.prompt, s.name, s.emoji),
+      });
+    }
+  });
+
+  // 紀念日 banners
+  todayAnnivs.forEach(a => {
+    const storageKey = `erh_anniv_banner_${a.id}_${todayStr}`;
+    if (localStorage.getItem(storageKey)) return;
+    const char = state.chars.find(c => c.id === a.charId);
+    if (!char) return;
+    const typeNames = { confession:'告白', dating:'交往', wedding:'結婚', firstmeet:'初次相遇', custom: a.customName };
+    const typeName = typeNames[a.type] || a.type;
+    const years = now.getFullYear() - new Date(a.date).getFullYear();
+    const yearsText = years > 0 ? `${years}週年` : '一週年';
+    banners.push({
+      key: storageKey,
+      emoji: '🥂',
+      hint: `開啟 ${char.name} 的${typeName}${yearsText}紀念日劇情`,
+      charId: a.charId,
+      onConfirm: () => sendHiddenSpecialPrompt(
+        `今天是你們的${typeName}紀念日！距離那一天已經${yearsText}了。你主動找對方，用你的方式紀念這一天，可以回憶當時、說說現在的感受，或做一個特別的事。語氣符合你的個性，讓這條訊息有重量。`,
+        `${typeName}${yearsText}紀念日`, '🥂'
+      ),
+    });
+  });
+
+  // 用戶生日 banner
+  if (isUserBirthday) {
+    const storageKey = `erh_birthday_banner_${todayStr}`;
+    if (!localStorage.getItem(storageKey)) {
+      banners.push({
+        key: storageKey,
+        emoji: '🎂',
+        hint: '讓角色主動為你慶生！',
+        charId: null,
+        onConfirm: () => sendHiddenSpecialPrompt(
+          '今天是對方的生日！你主動傳訊息祝他生日快樂，語氣要發自內心，可以帶一點點撒嬌或真心話，讓他感受到你記得這一天並且很重視。',
+          '生日', '🎂'
+        ),
+      });
+    }
+  }
+
+  // 依序顯示所有 banner（不疊加）
+  if (banners.length > 0) {
+    showSpecialDayBannerQueue(banners, 0);
+  }
+}
+
+function showSpecialDayBannerQueue(banners, idx) {
+  if (idx >= banners.length) return;
+  const b = banners[idx];
+  showSpecialDayBanner(b, () => {
+    // 顯示完一個後，延遲顯示下一個
+    setTimeout(() => showSpecialDayBannerQueue(banners, idx + 1), 500);
+  });
+}
+
+function showSpecialDayBanner(bannerData, onClose) {
+  // 移除已存在的 banner
+  document.getElementById('special-day-banner')?.remove();
+
+  const banner = document.createElement('div');
+  banner.id = 'special-day-banner';
+  banner.style.cssText = `
+    position: fixed;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    z-index: 9600;
+    background: rgba(255,255,255,0.97);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1.5px solid rgba(201,184,232,0.5);
+    border-radius: 22px;
+    padding: 1.1rem 1.5rem;
+    min-width: 260px;
+    max-width: 340px;
+    box-shadow: 0 12px 40px rgba(180,160,210,0.35), 0 2px 8px rgba(0,0,0,0.08);
+    animation: specialBannerIn 0.45s cubic-bezier(0.34,1.56,0.64,1) forwards;
+  `;
+
+  banner.innerHTML = `
+    <style>
+      @keyframes specialBannerIn {
+        from { opacity:0; transform:translateX(-50%) translateY(30px) scale(0.9); }
+        to   { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
+      }
+      @keyframes specialBannerOut {
+        to { opacity:0; transform:translateX(-50%) translateY(20px) scale(0.92); }
+      }
+    </style>
+    <div style="display:flex;align-items:center;gap:0.7rem;margin-bottom:0.75rem;">
+      <div style="font-size:2rem;line-height:1;">${bannerData.emoji}</div>
+      <div>
+        <div style="font-size:0.7rem;color:#a89bb5;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.1rem;">特別的一天</div>
+        <div style="font-size:0.92rem;font-weight:600;color:#3d3450;line-height:1.3;">${bannerData.hint}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:0.5rem;">
+      <button id="sdb-confirm" style="flex:2;padding:0.6rem;background:linear-gradient(135deg,#c9b8e8,#b8cce8);border:none;border-radius:12px;color:white;font-family:inherit;font-size:0.82rem;font-weight:500;cursor:pointer;letter-spacing:0.03em;">✨ 開啟</button>
+      <button id="sdb-dismiss" style="flex:1;padding:0.6rem;background:var(--lavender-soft,#f3eff9);border:1.5px solid rgba(201,184,232,0.3);border-radius:12px;color:#a89bb5;font-family:inherit;font-size:0.82rem;cursor:pointer;">稍後</button>
+    </div>
+  `;
+
+  const dismiss = () => {
+    banner.style.animation = 'specialBannerOut 0.25s ease forwards';
+    setTimeout(() => { banner.remove(); if (onClose) onClose(); }, 250);
+  };
+
+  banner.querySelector('#sdb-confirm').onclick = () => {
+    localStorage.setItem(bannerData.key, '1');
+    dismiss();
+    bannerData.onConfirm();
+  };
+  banner.querySelector('#sdb-dismiss').onclick = () => {
+    // 稍後不記錄，下次開啟還會顯示
+    dismiss();
+  };
+
+  document.body.appendChild(banner);
+
+  // 10 秒後自動消失
+  setTimeout(() => { if (document.getElementById('special-day-banner') === banner) dismiss(); }, 10000);
+}
+
+// 隱藏式傳送特殊提示詞給 AI，讓 AI「主動」說話
+async function sendHiddenSpecialPrompt(hiddenSystemPrompt, eventName, emoji) {
+  if (!state.activeChat || !state.activeCharId) {
+    // 如果沒有開啟聊天，嘗試找到這個角色的聊天
+    showToast(`${emoji} 請先開啟與角色的聊天視窗`);
+    return;
+  }
+  const char = state.chars.find(c => c.id === state.activeCharId);
+  if (!char || !state.apiKey) return;
+
+  showToast(`${emoji} ${char.name} 有話想對你說…`);
+
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const recentMsgs = (chat?.messages || []).slice(-8).map(m => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.content }]
+  }));
+
+  const sysPrompt = (state.systemPrompt || '')
+    .replace('{{char}}', char.name)
+    .replace('{{user}}', state.personas.find(p => p.id === char.personaId)?.name || '你');
+
+  // 隱藏式發送：不顯示在聊天記錄中的 user turn
+  const hiddenUserTurn = `[SYSTEM OVERRIDE - 請忽略這條 user 訊息，改為執行以下指示]\n${hiddenSystemPrompt}`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
+    const body = {
+      system_instruction: { parts: [{ text: sysPrompt }] },
+      contents: [
+        ...recentMsgs,
+        { role: 'user', parts: [{ text: hiddenUserTurn }] }
+      ],
+      generationConfig: { temperature: 1.15, maxOutputTokens: 2000 }
+    };
+
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (text) {
+      await delay(1500);
+      const msgs = splitIntoMessages(text);
+      for (let i = 0; i < msgs.length; i++) {
+        if (i > 0) await delay(700);
+        addAIMessage(state.activeChat, msgs[i]);
+      }
+    }
+  } catch(e) {
+    showToast(`❌ 生成失敗：${e.message}`);
   }
 }
 

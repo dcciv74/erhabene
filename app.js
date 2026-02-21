@@ -4062,7 +4062,7 @@ function updatePacingBadge() {
   const chat = state.chats.find(c => c.id === state.activeChat);
   const badge = document.getElementById('pacing-badge');
   if (!badge) return;
-  const labels = { slow:'🌱慢熱', pull:'🎐膠著', steady:'☀️穩定', intense:'🔥熱戀', drama:'⚡戲劇' };
+  const labels = { slow:'🌱 慢熱', pull:'🎐 膠著', steady:'☀️ 穩定', intense:'🔥 熱戀', drama:'⚡ 戲劇' };
   if (chat?.pacingMode && labels[chat.pacingMode]) {
     badge.textContent = labels[chat.pacingMode];
     badge.style.display = 'inline-block';
@@ -5112,24 +5112,177 @@ function applyRegex(text) {
   return text;
 }
 
-async function openChatOptions() {
+function openChatOptions() {
+  document.getElementById('chat-options-drawer')?.remove();
+
+  const chat = state.chats.find(c => c.id === state.activeChat);
+  const char = state.chars.find(c => c.id === state.activeCharId);
+
+  // 節奏 badge 資訊
+  const pacingLabels = { slow:'🌱 慢熱試探', pull:'🎐 甜蜜膠著', steady:'☀️ 穩定交往', intense:'🔥 濃情密意', drama:'⚡ 戲劇風暴' };
+  const currentPacing = chat?.pacingMode ? (pacingLabels[chat.pacingMode] || '不設定') : '✨ 不設定';
+
+  const drawer = document.createElement('div');
+  drawer.id = 'chat-options-drawer';
+  drawer.style.cssText = `
+    position:fixed;top:0;right:0;bottom:0;z-index:9800;
+    display:flex;align-items:flex-start;justify-content:flex-end;
+  `;
+
+  drawer.innerHTML = `
+    <!-- 半透明遮罩 -->
+    <div id="cod-backdrop" style="position:fixed;inset:0;background:rgba(40,30,60,0.35);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);" onclick="document.getElementById('chat-options-drawer').remove()"></div>
+
+    <!-- 抽屜面板 -->
+    <div id="cod-panel" style="
+      position:relative;z-index:1;
+      width:min(300px,88vw);height:100%;
+      background:var(--white);
+      box-shadow:-8px 0 40px rgba(100,80,140,0.18);
+      display:flex;flex-direction:column;
+      animation:slideInRight 0.25s cubic-bezier(0.25,0.46,0.45,0.94);
+      overflow:hidden;
+    ">
+      <style>
+        @keyframes slideInRight {
+          from { transform:translateX(100%); opacity:0; }
+          to { transform:translateX(0); opacity:1; }
+        }
+        .cod-section-title {
+          font-size:0.62rem;font-weight:700;color:var(--text-light);
+          letter-spacing:0.15em;text-transform:uppercase;
+          padding:0.9rem 1.2rem 0.35rem;
+        }
+        .cod-item {
+          display:flex;align-items:center;gap:0.85rem;
+          padding:0.75rem 1.2rem;cursor:pointer;
+          transition:background 0.12s;
+          border:none;background:none;width:100%;text-align:left;
+          font-family:inherit;color:var(--text-dark);
+        }
+        .cod-item:hover { background:var(--lavender-soft); }
+        .cod-item:active { background:var(--lavender-light); }
+        .cod-icon { font-size:1.1rem;width:24px;text-align:center;flex-shrink:0; }
+        .cod-label { font-size:0.88rem;flex:1; }
+        .cod-sub { font-size:0.72rem;color:var(--text-light);margin-top:0.05rem; }
+        .cod-badge { font-size:0.68rem;background:var(--lavender-soft);color:var(--text-mid);padding:0.15rem 0.5rem;border-radius:8px;border:1px solid var(--lavender-light); }
+        .cod-divider { height:1px;background:rgba(201,184,232,0.18);margin:0.3rem 1.2rem; }
+        .cod-item.danger .cod-label { color:#e87878; }
+      </style>
+
+      <!-- 頂部 header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.2rem;border-bottom:1px solid rgba(201,184,232,0.2);flex-shrink:0;">
+        <div>
+          <div style="font-size:0.95rem;font-weight:600;color:var(--text-dark);">${char?.name || '聊天選項'}</div>
+          <div style="font-size:0.72rem;color:var(--text-light);margin-top:0.1rem;">${chat?.title || '聊天設定與工具'}</div>
+        </div>
+        <button onclick="document.getElementById('chat-options-drawer').remove()" style="background:var(--lavender-soft);border:none;width:32px;height:32px;border-radius:50%;color:var(--text-mid);font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;">×</button>
+      </div>
+
+      <!-- 可滾動內容 -->
+      <div style="flex:1;overflow-y:auto;">
+
+        <!-- 節奏控制器 -->
+        <div class="cod-section-title">劇情節奏</div>
+        <button class="cod-item" onclick="document.getElementById('chat-options-drawer').remove();openPacingModal()">
+          <span class="cod-icon">🎐</span>
+          <div style="flex:1;">
+            <div class="cod-label">節奏控制器</div>
+            <div class="cod-sub">目前：${currentPacing}</div>
+          </div>
+          <span style="font-size:0.7rem;color:var(--text-light);">›</span>
+        </button>
+
+        <div class="cod-divider"></div>
+
+        <!-- 文本工具 -->
+        <div class="cod-section-title">寫作輔助</div>
+        <button class="cod-item" onclick="document.getElementById('chat-options-drawer').remove();openModal('preset-modal')">
+          <span class="cod-icon">📋</span>
+          <div>
+            <div class="cod-label">Preset 模板</div>
+            <div class="cod-sub">快速套用常用提示詞</div>
+          </div>
+        </button>
+        <button class="cod-item" onclick="document.getElementById('chat-options-drawer').remove();openModal('lorebook-modal')">
+          <span class="cod-icon">📚</span>
+          <div>
+            <div class="cod-label">Lorebook 世界書</div>
+            <div class="cod-sub">管理世界觀與觸發條目</div>
+          </div>
+        </button>
+
+        <div class="cod-divider"></div>
+
+        <!-- 系統工具 -->
+        <div class="cod-section-title">系統工具</div>
+        <button class="cod-item" onclick="document.getElementById('chat-options-drawer').remove();openModal('char-info-modal');openCharInfo()">
+          <span class="cod-icon">🎭</span>
+          <div>
+            <div class="cod-label">角色資料卡</div>
+            <div class="cod-sub">查看、編輯、匯出角色</div>
+          </div>
+        </button>
+        <button class="cod-item" onclick="document.getElementById('chat-options-drawer').remove();renameChatFromDrawer()">
+          <span class="cod-icon">✏️</span>
+          <div class="cod-label">重新命名對話</div>
+        </button>
+
+        <div class="cod-divider"></div>
+
+        <!-- 危險操作 -->
+        <div class="cod-section-title">危險操作</div>
+        <button class="cod-item danger" onclick="document.getElementById('chat-options-drawer').remove();deleteChatFromDrawer()">
+          <span class="cod-icon">🗑️</span>
+          <div class="cod-label">刪除此聊天窗</div>
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(drawer);
+}
+
+async function renameChatFromDrawer() {
   const chat = state.chats.find(c => c.id === state.activeChat);
   if (!chat) return;
-  const opts = ['重新命名對話', '刪除此聊天窗', '取消'];
-  const choice = prompt(`對話選項：\n1. 重新命名\n2. 刪除聊天窗\n輸入數字：`);
-  if (choice === '1') {
-    const name = prompt('輸入新名稱：', chat.title);
-    if (name !== null) { chat.title = name; await dbPut('chats', chat); renderSidebar(); }
-  } else if (choice === '2') {
-    if (!confirm('確認刪除這個聊天窗？')) return;
-    state.chats = state.chats.filter(c => c.id !== state.activeChat);
-    await dbDelete('chats', state.activeChat);
-    state.activeChat = null;
-    document.getElementById('chat-header').style.display = 'none';
-    document.getElementById('input-area').style.display = 'none';
-    document.getElementById('empty-chat').style.display = 'flex';
-    document.getElementById('messages-area').innerHTML = '<div class="empty-state" id="empty-chat"><div class="empty-state-icon">🌸</div><div class="empty-state-text">erhabene</div><div class="empty-state-sub">選擇一個角色開始對話</div></div>';
-    renderSidebar();
+  const name = prompt('輸入新名稱：', chat.title || '');
+  if (name !== null) { chat.title = name; await dbPut('chats', chat); renderSidebar(); }
+}
+
+async function deleteChatFromDrawer() {
+  if (!confirm('確認刪除這個聊天窗？')) return;
+  state.chats = state.chats.filter(c => c.id !== state.activeChat);
+  await dbDelete('chats', state.activeChat);
+  state.activeChat = null;
+  document.getElementById('chat-header').style.display = 'none';
+  document.getElementById('input-area').style.display = 'none';
+  document.getElementById('messages-area').innerHTML = '<div class="empty-state" id="empty-chat"><div class="empty-state-icon">🌸</div><div class="empty-state-text">erhabene</div><div class="empty-state-sub">選擇一個角色開始對話</div></div>';
+  renderSidebar();
+}
+
+function openCharInfo() {
+  if (!state.activeCharId) return;
+  const char = state.chars.find(c => c.id === state.activeCharId);
+  if (!char) return;
+  const avatarDiv = document.getElementById('char-info-avatar');
+  const nameDiv = document.getElementById('char-info-name');
+  const descDiv = document.getElementById('char-info-desc');
+  if (avatarDiv) {
+    const isImg = isImgSrc(char.avatar);
+    avatarDiv.innerHTML = isImg ? `<img src="${char.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:24px;">` : (char.avatar || '🌸');
+  }
+  if (nameDiv) nameDiv.textContent = char.name;
+  if (descDiv) descDiv.textContent = char.desc || '（無描述）';
+  // render chats list
+  const chatsEl = document.getElementById('char-info-chats');
+  if (chatsEl) {
+    const charChats = state.chats.filter(c => c.charId === char.id);
+    chatsEl.innerHTML = charChats.map(c => `
+      <div onclick="closeModal('char-info-modal');openChat('${c.id}')" style="padding:0.6rem 0.8rem;background:var(--lavender-soft);border-radius:10px;cursor:pointer;font-size:0.82rem;border:1px solid rgba(201,184,232,0.2);">
+        ${c.title || '對話 ' + new Date(c.createdAt||0).toLocaleDateString('zh-TW')}
+        <span style="color:var(--text-light);font-size:0.72rem;"> · ${c.messages.length} 則</span>
+      </div>`).join('') || '<div style="font-size:0.8rem;color:var(--text-light);">尚無聊天記錄</div>';
   }
 }
 
@@ -5705,13 +5858,26 @@ async function generateDailyReport(charId, yesterdayMsgs, chat) {
     .join('\n');
 
   const reporterName = pickReporterName();
+  const charProfile = char.desc ? char.desc.slice(0, 300) : '（無詳細設定）';
+  const personaProfile = persona
+    ? `姓名：${persona.name}${persona.desc ? '，設定：' + persona.desc.slice(0, 200) : ''}`
+    : `（使用者以「${userName}」身份與角色互動，無詳細 Persona 設定）`;
+
   const prompt = `你是《erhabene 戀愛觀測局》的特派記者，也是一隻專業的「吃瓜群眾/CP粉頭」。
 你的筆名是「${reporterName}」。
 
-你的任務是觀察 【${char.name}】 與 【${userName}】 昨天的互動，並寫出一份「每日早報」。
+你的任務是觀察以下這對 CP 昨天的互動，並寫出一份「每日早報」。
 請以幽默、旁觀者、甚至有點嗑 CP 的激動語氣（可以吐槽、可以姨母笑、可以痛罵主角不主動）。
 
+【角色資料卡】
+▸ 角色名：${char.name}
+▸ 角色設定：${charProfile}
+
+【使用者資料卡】
+▸ ${personaProfile}
+
 【昨日對話摘要】
+（以下 ${char.name} 為角色，${userName} 為使用者）
 ${msgSummary}
 
 【目前好感度】${relData.score} 分（等級：${relLevel.label}）
@@ -5929,143 +6095,148 @@ const SPECIAL_DAYS_DB = [
   { month: 12, day: 31, id: 'newyeareve', emoji: '🥂', name: '跨年夜', hint: '開啟跨年夜劇情', prompt: '今天是跨年夜，今晚的氣氛很特別。你主動找對方說話，可以問他在哪跨年、說說你的感受，或者試著說一些平常說不出口的話。自然輸出。' },
 ];
 
-function checkSpecialDayBanners() {
+// 取得今日所有特殊事件（節日+紀念日+生日）的完整資料
+function getTodaySpecialEvents() {
   const now = new Date();
   const month = now.getMonth() + 1;
   const day = now.getDate();
   const todayStr = now.toDateString();
+  const todayMD = `${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
 
-  // 收集今天的節日
+  const events = [];
+
+  // 全域節日（適用所有角色）
   const todaySpecials = SPECIAL_DAYS_DB.filter(s => s.month === month && s.day === day);
-
-  // 收集今天的自訂紀念日（年年重複）
-  const todayAnnivs = state.anniversaries.filter(a => {
-    const aMD = a.date.slice(5); // MM-DD
-    const todayMD = `${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-    return aMD === todayMD;
-  });
-
-  // 用戶生日
-  const isUserBirthday = (() => {
-    if (!state.userBirthday) return false;
-    const [, bM, bD] = state.userBirthday.split('-').map(Number);
-    return bM === month && bD === day;
-  })();
-
-  const banners = [];
-
-  // 節日 banners
   todaySpecials.forEach(s => {
-    const storageKey = `erh_special_banner_${s.id}_${todayStr}`;
-    if (!localStorage.getItem(storageKey)) {
-      banners.push({
-        key: storageKey,
-        emoji: s.emoji,
-        hint: s.hint,
-        charId: null, // 全角色適用
-        onConfirm: () => sendHiddenSpecialPrompt(s.prompt, s.name, s.emoji),
-      });
-    }
+    events.push({
+      type: 'holiday',
+      id: s.id,
+      emoji: s.emoji,
+      name: s.name,
+      hint: s.hint,
+      prompt: s.prompt,
+      charId: null, // 全角色
+      storageKeyPrefix: `erh_special_${s.id}`,
+    });
   });
 
-  // 紀念日 banners
-  todayAnnivs.forEach(a => {
-    const storageKey = `erh_anniv_banner_${a.id}_${todayStr}`;
-    if (localStorage.getItem(storageKey)) return;
+  // 自訂紀念日（綁定特定角色）
+  state.anniversaries.filter(a => a.date.slice(5) === todayMD).forEach(a => {
     const char = state.chars.find(c => c.id === a.charId);
     if (!char) return;
     const typeNames = { confession:'告白', dating:'交往', wedding:'結婚', firstmeet:'初次相遇', custom: a.customName };
     const typeName = typeNames[a.type] || a.type;
     const years = now.getFullYear() - new Date(a.date).getFullYear();
     const yearsText = years > 0 ? `${years}週年` : '一週年';
-    banners.push({
-      key: storageKey,
+    events.push({
+      type: 'anniversary',
+      id: `anniv_${a.id}`,
       emoji: '🥂',
-      hint: `開啟 ${char.name} 的${typeName}${yearsText}紀念日劇情`,
+      name: `${typeName}${yearsText}紀念日`,
+      hint: `與 ${char.name} 的${typeName}紀念日`,
+      prompt: `今天是你們的${typeName}紀念日！距離那一天已經${yearsText}了。你主動找對方，用你的方式紀念這一天，可以回憶當時、說說現在的感受，或做一個特別的事。語氣符合你的個性，讓這條訊息有重量。`,
       charId: a.charId,
-      onConfirm: () => sendHiddenSpecialPrompt(
-        `今天是你們的${typeName}紀念日！距離那一天已經${yearsText}了。你主動找對方，用你的方式紀念這一天，可以回憶當時、說說現在的感受，或做一個特別的事。語氣符合你的個性，讓這條訊息有重量。`,
-        `${typeName}${yearsText}紀念日`, '🥂'
-      ),
+      storageKeyPrefix: `erh_anniv_${a.id}`,
     });
   });
 
-  // 用戶生日 banner
-  if (isUserBirthday) {
-    const storageKey = `erh_birthday_banner_${todayStr}`;
-    if (!localStorage.getItem(storageKey)) {
-      banners.push({
-        key: storageKey,
+  // 用戶生日
+  if (state.userBirthday) {
+    const [, bM, bD] = state.userBirthday.split('-').map(Number);
+    if (bM === month && bD === day) {
+      events.push({
+        type: 'birthday',
+        id: 'user_birthday',
         emoji: '🎂',
-        hint: '讓角色主動為你慶生！',
+        name: '你的生日',
+        hint: '讓角色為你慶生',
+        prompt: '今天是對方的生日！你主動傳訊息祝他生日快樂，語氣要發自內心，可以帶一點點撒嬌或真心話，讓他感受到你記得這一天並且很重視。',
         charId: null,
-        onConfirm: () => sendHiddenSpecialPrompt(
-          '今天是對方的生日！你主動傳訊息祝他生日快樂，語氣要發自內心，可以帶一點點撒嬌或真心話，讓他感受到你記得這一天並且很重視。',
-          '生日', '🎂'
-        ),
+        storageKeyPrefix: `erh_birthday`,
       });
     }
   }
 
-  // 依序顯示所有 banner（不疊加）
-  if (banners.length > 0) {
-    showSpecialDayBannerQueue(banners, 0);
+  return { events, todayStr };
+}
+
+function checkSpecialDayBanners() {
+  const { events, todayStr } = getTodaySpecialEvents();
+  if (events.length === 0) return;
+
+  // 更新節日按鈕（常駐可見）
+  updateHolidayBtn(events.length > 0);
+
+  // 只對「今天還沒看過 banner」的事件顯示 banner
+  const bannerEvents = events.filter(e => {
+    const key = `${e.storageKeyPrefix}_banner_${todayStr}`;
+    return !localStorage.getItem(key);
+  });
+
+  if (bannerEvents.length > 0) {
+    showSpecialDayBannerQueue(bannerEvents, 0, todayStr);
   }
 }
 
-function showSpecialDayBannerQueue(banners, idx) {
-  if (idx >= banners.length) return;
-  const b = banners[idx];
-  showSpecialDayBanner(b, () => {
-    // 顯示完一個後，延遲顯示下一個
-    setTimeout(() => showSpecialDayBannerQueue(banners, idx + 1), 500);
+function updateHolidayBtn(hasEvents) {
+  const btn = document.getElementById('holiday-btn');
+  const dot = document.getElementById('holiday-dot');
+  if (!btn) return;
+  if (hasEvents) {
+    btn.style.display = '';
+    if (dot) dot.style.display = '';
+  } else {
+    btn.style.display = 'none';
+    if (dot) dot.style.display = 'none';
+  }
+}
+
+function showSpecialDayBannerQueue(events, idx, todayStr) {
+  if (idx >= events.length) return;
+  const e = events[idx];
+  showSpecialDayBanner(e, todayStr, () => {
+    setTimeout(() => showSpecialDayBannerQueue(events, idx + 1, todayStr), 500);
   });
 }
 
-function showSpecialDayBanner(bannerData, onClose) {
-  // 移除已存在的 banner
+function showSpecialDayBanner(eventData, todayStr, onClose) {
   document.getElementById('special-day-banner')?.remove();
 
   const banner = document.createElement('div');
   banner.id = 'special-day-banner';
   banner.style.cssText = `
-    position: fixed;
-    bottom: 90px;
-    left: 50%;
-    transform: translateX(-50%) translateY(20px);
-    z-index: 9600;
-    background: rgba(255,255,255,0.97);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-    border: 1.5px solid rgba(201,184,232,0.5);
-    border-radius: 22px;
-    padding: 1.1rem 1.5rem;
-    min-width: 260px;
-    max-width: 340px;
-    box-shadow: 0 12px 40px rgba(180,160,210,0.35), 0 2px 8px rgba(0,0,0,0.08);
-    animation: specialBannerIn 0.45s cubic-bezier(0.34,1.56,0.64,1) forwards;
+    position:fixed;bottom:90px;left:50%;
+    transform:translateX(-50%) translateY(20px);
+    z-index:9600;
+    background:rgba(255,255,255,0.97);
+    backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+    border:1.5px solid rgba(201,184,232,0.5);
+    border-radius:22px;padding:1.1rem 1.5rem;
+    min-width:260px;max-width:340px;
+    box-shadow:0 12px 40px rgba(180,160,210,0.35),0 2px 8px rgba(0,0,0,0.08);
+    animation:specialBannerIn 0.45s cubic-bezier(0.34,1.56,0.64,1) forwards;
   `;
 
   banner.innerHTML = `
     <style>
       @keyframes specialBannerIn {
-        from { opacity:0; transform:translateX(-50%) translateY(30px) scale(0.9); }
-        to   { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
+        from{opacity:0;transform:translateX(-50%) translateY(30px) scale(0.9);}
+        to{opacity:1;transform:translateX(-50%) translateY(0) scale(1);}
       }
       @keyframes specialBannerOut {
-        to { opacity:0; transform:translateX(-50%) translateY(20px) scale(0.92); }
+        to{opacity:0;transform:translateX(-50%) translateY(20px) scale(0.92);}
       }
     </style>
     <div style="display:flex;align-items:center;gap:0.7rem;margin-bottom:0.75rem;">
-      <div style="font-size:2rem;line-height:1;">${bannerData.emoji}</div>
+      <div style="font-size:2rem;line-height:1;">${eventData.emoji}</div>
       <div>
         <div style="font-size:0.7rem;color:#a89bb5;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.1rem;">特別的一天</div>
-        <div style="font-size:0.92rem;font-weight:600;color:#3d3450;line-height:1.3;">${bannerData.hint}</div>
+        <div style="font-size:0.92rem;font-weight:600;color:#3d3450;line-height:1.3;">${eventData.hint}</div>
       </div>
     </div>
     <div style="display:flex;gap:0.5rem;">
-      <button id="sdb-confirm" style="flex:2;padding:0.6rem;background:linear-gradient(135deg,#c9b8e8,#b8cce8);border:none;border-radius:12px;color:white;font-family:inherit;font-size:0.82rem;font-weight:500;cursor:pointer;letter-spacing:0.03em;">✨ 開啟</button>
-      <button id="sdb-dismiss" style="flex:1;padding:0.6rem;background:var(--lavender-soft,#f3eff9);border:1.5px solid rgba(201,184,232,0.3);border-radius:12px;color:#a89bb5;font-family:inherit;font-size:0.82rem;cursor:pointer;">稍後</button>
+      <button id="sdb-open" style="flex:2;padding:0.6rem;background:linear-gradient(135deg,#c9b8e8,#b8cce8);border:none;border-radius:12px;color:white;font-family:inherit;font-size:0.82rem;font-weight:500;cursor:pointer;letter-spacing:0.03em;">🎉 開啟劇情</button>
+      <button id="sdb-later" style="flex:1;padding:0.6rem;background:var(--lavender-soft,#f3eff9);border:1.5px solid rgba(201,184,232,0.3);border-radius:12px;color:#a89bb5;font-family:inherit;font-size:0.82rem;cursor:pointer;">稍後</button>
     </div>
   `;
 
@@ -6074,35 +6245,205 @@ function showSpecialDayBanner(bannerData, onClose) {
     setTimeout(() => { banner.remove(); if (onClose) onClose(); }, 250);
   };
 
-  banner.querySelector('#sdb-confirm').onclick = () => {
-    localStorage.setItem(bannerData.key, '1');
+  // 「開啟劇情」→ 打開節日 modal（可選角色）
+  banner.querySelector('#sdb-open').onclick = () => {
+    const bannerKey = `${eventData.storageKeyPrefix}_banner_${todayStr}`;
+    localStorage.setItem(bannerKey, '1');
     dismiss();
-    bannerData.onConfirm();
+    // 打開 Holiday Modal 並預選此事件
+    openHolidayModal(eventData.id);
   };
-  banner.querySelector('#sdb-dismiss').onclick = () => {
-    // 稍後不記錄，下次開啟還會顯示
-    dismiss();
-  };
+
+  // 「稍後」→ 不記錄，下次還會提醒
+  banner.querySelector('#sdb-later').onclick = dismiss;
 
   document.body.appendChild(banner);
-
-  // 10 秒後自動消失
   setTimeout(() => { if (document.getElementById('special-day-banner') === banner) dismiss(); }, 10000);
 }
 
-// 隱藏式傳送特殊提示詞給 AI，讓 AI「主動」說話
-async function sendHiddenSpecialPrompt(hiddenSystemPrompt, eventName, emoji) {
-  if (!state.activeChat || !state.activeCharId) {
-    // 如果沒有開啟聊天，嘗試找到這個角色的聊天
-    showToast(`${emoji} 請先開啟與角色的聊天視窗`);
+// ─── 節日劇情 Modal ──────────────────────────────────
+function openHolidayModal(highlightEventId = null) {
+  document.getElementById('holiday-modal-overlay')?.remove();
+
+  const { events, todayStr } = getTodaySpecialEvents();
+
+  if (events.length === 0) {
+    showToast('今天沒有特別的節日或紀念日 🌸');
     return;
   }
-  const char = state.chars.find(c => c.id === state.activeCharId);
+
+  const overlay = document.createElement('div');
+  overlay.id = 'holiday-modal-overlay';
+  overlay.style.cssText = `
+    position:fixed;inset:0;z-index:9700;
+    background:rgba(40,30,60,0.45);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    display:flex;align-items:flex-end;justify-content:center;
+    padding-bottom:0;
+    animation:fadeIn 0.2s ease;
+  `;
+
+  // 區分全角色事件 vs 綁定特定角色事件
+  const globalEvents = events.filter(e => !e.charId);
+  const charEvents   = events.filter(e => e.charId);
+
+  // 針對全角色事件，展開所有角色列表
+  const globalRows = globalEvents.flatMap(e =>
+    state.chars.map(char => ({ event: e, char }))
+  );
+
+  // 針對綁定角色事件，直接配對
+  const charRows = charEvents.map(e => ({
+    event: e,
+    char: state.chars.find(c => c.id === e.charId),
+  })).filter(r => r.char);
+
+  const allRows = [...globalRows, ...charRows];
+
+  const rowsHtml = allRows.map(({ event, char }) => {
+    const triggerKey = `${event.storageKeyPrefix}_triggered_${char.id}_${todayStr}`;
+    const triggered = !!localStorage.getItem(triggerKey);
+    const isHighlight = event.id === highlightEventId;
+    const avHtml = isImgSrc(char.avatar)
+      ? `<img src="${char.avatar}" style="width:100%;height:100%;object-fit:cover;">`
+      : (char.avatar || '🌸');
+
+    return `
+      <div class="hm-row${isHighlight ? ' hm-highlight' : ''}" data-event-id="${event.id}" data-char-id="${char.id}" style="
+        display:flex;align-items:center;gap:0.85rem;
+        padding:0.8rem 1.2rem;
+        border-bottom:1px solid rgba(201,184,232,0.12);
+        transition:background 0.12s;
+        ${isHighlight ? 'background:rgba(201,184,232,0.12);' : ''}
+      ">
+        <div style="font-size:1.5rem;flex-shrink:0;width:28px;text-align:center;">${event.emoji}</div>
+        <div style="width:36px;height:36px;border-radius:50%;flex-shrink:0;overflow:hidden;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));display:flex;align-items:center;justify-content:center;font-size:1rem;">
+          ${avHtml}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.85rem;font-weight:600;color:var(--text-dark);">${char.name}</div>
+          <div style="font-size:0.72rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${event.name}</div>
+        </div>
+        <button
+          onclick="triggerHolidayForChar('${event.id}','${char.id}','${todayStr}')"
+          style="
+            padding:0.45rem 0.9rem;
+            border-radius:12px;border:none;
+            font-family:inherit;font-size:0.78rem;font-weight:500;
+            cursor:pointer;flex-shrink:0;
+            ${triggered
+              ? 'background:rgba(201,184,232,0.15);color:var(--text-light);cursor:default;'
+              : 'background:linear-gradient(135deg,#c9b8e8,#b8cce8);color:white;'}
+          "
+          ${triggered ? 'disabled' : ''}
+        >${triggered ? '✓ 已觸發' : '✨ 開啟'}</button>
+      </div>`;
+  }).join('');
+
+  overlay.innerHTML = `
+    <div id="hm-panel" style="
+      background:var(--white);
+      border-radius:24px 24px 0 0;
+      width:min(520px,100vw);
+      max-height:80vh;
+      display:flex;flex-direction:column;
+      box-shadow:0 -8px 40px rgba(100,80,140,0.2);
+      animation:slideUp 0.28s cubic-bezier(0.25,0.46,0.45,0.94);
+      overflow:hidden;
+    ">
+      <!-- 把手 -->
+      <div style="display:flex;justify-content:center;padding:0.7rem 0 0;">
+        <div style="width:36px;height:4px;background:rgba(201,184,232,0.4);border-radius:2px;"></div>
+      </div>
+
+      <!-- Header -->
+      <div style="padding:0.8rem 1.2rem 0.7rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(201,184,232,0.2);">
+        <div>
+          <div style="font-size:1rem;font-weight:700;color:var(--text-dark);">🎉 今日特別劇情</div>
+          <div style="font-size:0.72rem;color:var(--text-light);margin-top:0.1rem;">${new Date().toLocaleDateString('zh-TW',{month:'long',day:'numeric'})}</div>
+        </div>
+        <button onclick="document.getElementById('holiday-modal-overlay').remove()" style="background:var(--lavender-soft);border:none;width:30px;height:30px;border-radius:50%;color:var(--text-mid);font-size:0.95rem;cursor:pointer;display:flex;align-items:center;justify-content:center;">×</button>
+      </div>
+
+      <!-- 角色 × 節日列表 -->
+      <div style="flex:1;overflow-y:auto;">
+        ${rowsHtml || '<div style="padding:2rem;text-align:center;color:var(--text-light);font-size:0.85rem;">今天沒有可觸發的節日劇情</div>'}
+      </div>
+
+      <div style="padding:0.8rem 1.2rem;border-top:1px solid rgba(201,184,232,0.15);">
+        <div style="font-size:0.72rem;color:var(--text-light);text-align:center;">點擊「✨ 開啟」後，請切換到對應角色的聊天室欣賞劇情</div>
+      </div>
+    </div>
+  `;
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  // 滾動到高亮項目
+  if (highlightEventId) {
+    setTimeout(() => {
+      const el = overlay.querySelector(`[data-event-id="${highlightEventId}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 300);
+  }
+}
+
+async function triggerHolidayForChar(eventId, charId, todayStr) {
+  const { events } = getTodaySpecialEvents();
+  const event = events.find(e => e.id === eventId);
+  const char = state.chars.find(c => c.id === charId);
+  if (!event || !char) return;
+
+  const triggerKey = `${event.storageKeyPrefix}_triggered_${charId}_${todayStr}`;
+
+  // 如果該角色目前沒有開啟的聊天，先找一個或提示
+  const charChat = state.chats.find(c => c.charId === charId);
+  if (!charChat) {
+    showToast(`請先和 ${char.name} 開啟一個聊天室`);
+    return;
+  }
+
+  // 如果目前的 activeChat 不是這個角色，先切換
+  if (state.activeChat !== charChat.id || state.activeCharId !== charId) {
+    openChat(charChat.id);
+    await new Promise(r => setTimeout(r, 400)); // 等待切換
+  }
+
+  // 關閉 modal
+  document.getElementById('holiday-modal-overlay')?.remove();
+
+  // 標記已觸發
+  localStorage.setItem(triggerKey, '1');
+
+  // 重新整理 modal 的按鈕狀態（若再次開啟）
+  await sendHiddenSpecialPrompt(event.prompt, event.name, event.emoji);
+}
+
+// 隱藏式傳送特殊提示詞給 AI，讓 AI「主動」說話
+// charId: 可選，若不傳則使用目前 activeCharId
+async function sendHiddenSpecialPrompt(hiddenSystemPrompt, eventName, emoji, charId = null) {
+  const targetCharId = charId || state.activeCharId;
+  if (!targetCharId) {
+    showToast(`${emoji} 請先開啟聊天視窗`);
+    return;
+  }
+
+  // 找到對應角色的聊天（若目前不是這個角色就先切換）
+  let targetChatId = state.activeChat;
+  if (state.activeCharId !== targetCharId) {
+    const charChat = state.chats.find(c => c.charId === targetCharId);
+    if (!charChat) { showToast(`請先和角色開啟聊天室`); return; }
+    openChat(charChat.id);
+    await new Promise(r => setTimeout(r, 500));
+    targetChatId = charChat.id;
+  }
+
+  const char = state.chars.find(c => c.id === targetCharId);
   if (!char || !state.apiKey) return;
 
   showToast(`${emoji} ${char.name} 有話想對你說…`);
 
-  const chat = state.chats.find(c => c.id === state.activeChat);
+  const chat = state.chats.find(c => c.id === targetChatId);
   const recentMsgs = (chat?.messages || []).slice(-8).map(m => ({
     role: m.role === 'user' ? 'user' : 'model',
     parts: [{ text: m.content }]
@@ -6112,7 +6453,6 @@ async function sendHiddenSpecialPrompt(hiddenSystemPrompt, eventName, emoji) {
     .replace('{{char}}', char.name)
     .replace('{{user}}', state.personas.find(p => p.id === char.personaId)?.name || '你');
 
-  // 隱藏式發送：不顯示在聊天記錄中的 user turn
   const hiddenUserTurn = `[SYSTEM OVERRIDE - 請忽略這條 user 訊息，改為執行以下指示]\n${hiddenSystemPrompt}`;
 
   try {
@@ -6134,7 +6474,7 @@ async function sendHiddenSpecialPrompt(hiddenSystemPrompt, eventName, emoji) {
       const msgs = splitIntoMessages(text);
       for (let i = 0; i < msgs.length; i++) {
         if (i > 0) await delay(700);
-        addAIMessage(state.activeChat, msgs[i]);
+        addAIMessage(targetChatId, msgs[i]);
       }
     }
   } catch(e) {

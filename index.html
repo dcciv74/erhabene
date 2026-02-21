@@ -1941,7 +1941,10 @@ body {
         <div class="header-avatar" id="header-avatar">🌸</div>
         <div class="header-info">
           <div class="header-name" id="header-name">選擇角色</div>
-          <div class="header-status" id="header-status">— 點擊角色開始聊天 —</div>
+          <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+            <div class="header-status" id="header-status">— 點擊角色開始聊天 —</div>
+            <span id="pacing-badge" style="display:none;font-size:0.62rem;background:rgba(201,184,232,0.3);color:var(--text-mid);padding:0.1rem 0.45rem;border-radius:8px;border:1px solid rgba(201,184,232,0.4);cursor:pointer;white-space:nowrap;font-weight:600;" onclick="openChatOptions()" title="點擊變更節奏"></span>
+          </div>
         </div>
         <div class="header-actions">
           <button class="header-btn" onclick="openChatOptions()" title="更多">⋯</button>
@@ -1976,13 +1979,12 @@ body {
           <button class="toolbar-btn" onclick="triggerImageGen()" title="生成圖片">🖼️</button>
           <button class="toolbar-btn" onclick="document.getElementById('chat-img-upload').click()" title="上傳圖片">📷</button>
           <input type="file" id="chat-img-upload" accept="image/*" style="display:none" onchange="handleChatImageUpload(event)">
-          <button class="toolbar-btn" onclick="openStickerPicker()" title="(表情)">🎭</button>
-          <button class="toolbar-btn" onclick="openModal('preset-modal')" title="Preset">📋</button>
+          <button class="toolbar-btn" onclick="openStickerPicker()" title="貼圖表情">🎭</button>
           <button class="toolbar-btn" id="memory-toggle-btn" onclick="toggleMemoryPanel()" title="記憶">🧠</button>
-          <button class="toolbar-btn" onclick="generateInnerVoice()" title="心聲 — 讀取角色此刻的內心想法">💭</button>
+          <button class="toolbar-btn" onclick="generateInnerVoice()" title="心聲">💭</button>
           <button class="toolbar-btn" onclick="triggerDailyTopics()" title="今日話題">📰</button>
-          <button class="toolbar-btn" onclick="openPacingModal()" title="節奏控制器" style="position:relative;">🎐<span id="pacing-badge" style="display:none;position:absolute;top:-4px;right:-6px;background:var(--lavender);color:white;font-size:0.45rem;padding:0.1rem 0.3rem;border-radius:6px;white-space:nowrap;font-weight:700;"></span></button>
           <button class="toolbar-btn" onclick="triggerDailyReport()" title="每日早報">🗞️</button>
+          <button class="toolbar-btn" id="holiday-btn" onclick="openHolidayModal()" title="節日劇情" style="position:relative;display:none;">🎉<span id="holiday-dot" style="position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:#e8787a;display:none;"></span></button>
         </div>
         <!-- 今日話題欄 -->
         <div id="daily-topics-bar" class="daily-topics-bar" style="display:none;"></div>

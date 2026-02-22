@@ -573,9 +573,11 @@ body {
 }
 .imagegen-type-btn.active, .imagegen-style-btn.active {
   border-color: var(--lavender);
-  background: var(--lavender-soft);
+  background: linear-gradient(135deg, rgba(201,184,232,0.25), rgba(184,204,232,0.18));
   color: var(--text-dark);
-  box-shadow: 0 2px 8px var(--shadow);
+  box-shadow: 0 2px 8px var(--shadow), inset 0 0 0 1.5px var(--lavender);
+  font-weight: 600;
+  transform: translateY(-1px);
 }
 
 
@@ -1906,7 +1908,8 @@ body {
   <!-- Side Nav -->
   <nav id="side-nav">
     <div class="nav-logo">e</div>
-    <button class="nav-btn active" onclick="switchPage('chat')" title="聊天" id="nav-chat">💬</button>
+    <button class="nav-btn active" onclick="switchPage('foyer')" title="玄關" id="nav-foyer">🏠</button>
+    <button class="nav-btn" onclick="switchPage('chat')" title="聊天" id="nav-chat">💬</button>
     <button class="nav-btn" onclick="switchPage('chars')" title="角色" id="nav-chars">🌸</button>
     <button class="nav-btn" onclick="switchPage('social')" title="社群" id="nav-social">✦</button>
     <button class="nav-btn" onclick="switchPage('diary')" title="日記" id="nav-diary">📔</button>
@@ -1929,9 +1932,158 @@ body {
 
   <!-- Main Area -->
   <div id="main-area">
-    
+
+    <!-- FOYER PAGE 玄關 -->
+    <div class="page active" id="foyer-page" style="overflow-y:auto;position:relative;">
+      <style>
+        #foyer-page {
+          background: linear-gradient(160deg, #1e1630 0%, #2a1f40 40%, #1a2535 100%);
+          min-height: 100%;
+        }
+        .foyer-bg {
+          position: absolute;
+          inset: 0;
+          background-image: url('');
+          background-size: cover;
+          background-position: center;
+          opacity: 0.35;
+          transition: opacity 0.5s;
+          pointer-events: none;
+          z-index: 0;
+        }
+        .foyer-content {
+          position: relative;
+          z-index: 1;
+          padding: 2.5rem 1.4rem 7rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1.4rem;
+          max-width: 520px;
+          margin: 0 auto;
+        }
+        .foyer-logo {
+          font-family: 'Cormorant Garamond', serif;
+          font-style: italic;
+          font-size: 1.7rem;
+          color: rgba(255,255,255,0.88);
+          letter-spacing: 0.04em;
+        }
+        .foyer-section-label {
+          font-size: 0.6rem;
+          letter-spacing: 0.2em;
+          text-transform: uppercase;
+          color: rgba(255,255,255,0.38);
+          margin-bottom: 0.5rem;
+        }
+        .foyer-paper-card {
+          display: flex;
+          align-items: center;
+          gap: 0.85rem;
+          background: rgba(255,255,255,0.1);
+          backdrop-filter: blur(18px);
+          -webkit-backdrop-filter: blur(18px);
+          border: 1px solid rgba(255,255,255,0.18);
+          border-radius: 16px;
+          padding: 0.85rem 1rem;
+          cursor: pointer;
+          transition: all 0.2s;
+          position: relative;
+          margin-bottom: 0.6rem;
+        }
+        .foyer-paper-card:hover { background: rgba(255,255,255,0.16); transform: translateY(-1px); }
+        .foyer-paper-card.read { opacity: 0.5; }
+        .foyer-paper-unread { position:absolute;top:10px;right:10px;width:7px;height:7px;border-radius:50%;background:#e8a0a0;box-shadow:0 0 8px rgba(232,160,160,0.8); }
+        .foyer-char-row {
+          display: flex;
+          gap: 0.8rem;
+        }
+        .foyer-char-card {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.5rem;
+          background: rgba(255,255,255,0.1);
+          backdrop-filter: blur(18px);
+          -webkit-backdrop-filter: blur(18px);
+          border: 1px solid rgba(255,255,255,0.18);
+          border-radius: 18px;
+          padding: 1rem 0.5rem 0.8rem;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .foyer-char-card:hover { background: rgba(255,255,255,0.18); transform: translateY(-2px); }
+        .foyer-char-avatar {
+          width: 50px; height: 50px;
+          border-radius: 50%;
+          border: 2px solid rgba(255,255,255,0.3);
+          background: linear-gradient(135deg,#c9b8e8,#b8cce8);
+          display: flex;align-items:center;justify-content:center;
+          font-size: 1.3rem;
+          overflow: hidden;
+          position: relative;
+        }
+        .foyer-char-avatar img { width:100%;height:100%;object-fit:cover; }
+        .foyer-char-name { font-size:0.8rem;color:rgba(255,255,255,0.88);font-weight:500; }
+        .foyer-char-sub { font-size:0.63rem;color:rgba(255,255,255,0.4);text-align:center; }
+        .foyer-status-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          background: rgba(255,255,255,0.12);
+          border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 20px;
+          padding: 0.3rem 0.7rem;
+          cursor: pointer;
+          font-size: 0.7rem;
+          color: rgba(255,255,255,0.8);
+          transition: background 0.15s;
+        }
+        .foyer-status-badge:hover { background: rgba(255,255,255,0.18); }
+        .foyer-clock {
+          font-family: 'Cormorant Garamond', serif;
+          font-size: 3.2rem;
+          color: rgba(255,255,255,0.85);
+          line-height: 1;
+          text-shadow: 0 4px 24px rgba(0,0,0,0.4);
+          letter-spacing: -0.02em;
+        }
+        .foyer-date { font-size: 0.72rem; color: rgba(255,255,255,0.42); letter-spacing: 0.1em; margin-top: 0.15rem; }
+      </style>
+
+      <div class="foyer-bg" id="foyer-bg"></div>
+
+      <div class="foyer-content">
+        <!-- Header row -->
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;">
+          <div>
+            <div class="foyer-logo">erhabene</div>
+          </div>
+          <button class="foyer-status-badge user-status-badge" onclick="openStatusMenu()">🕒 自動</button>
+        </div>
+
+        <!-- 時鐘 -->
+        <div>
+          <div class="foyer-clock" id="foyer-clock">--:--</div>
+          <div class="foyer-date" id="foyer-date"></div>
+        </div>
+
+        <!-- 派報亭 -->
+        <div id="foyer-newsstand">
+          <div class="foyer-section-label">📮 今日情報</div>
+          <div id="foyer-papers"></div>
+        </div>
+
+        <!-- 核心角色 -->
+        <div id="foyer-inner-circle">
+          <div class="foyer-section-label">✦ 常用角色</div>
+          <div class="foyer-char-row" id="foyer-char-row"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- CHAT PAGE -->
-    <div class="page active" id="chat-page">
+    <div class="page" id="chat-page">
       <div id="chat-header" style="display:none;">
         <!-- 手機版返回按鈕（桌機隱藏） -->
         <button id="mobile-back-btn" onclick="showMobileChatList()"
@@ -2042,7 +2194,15 @@ body {
         <div id="theater-compose-panel" style="background:rgba(255,255,255,0.88);border-radius:20px;padding:1.2rem;box-shadow:0 2px 10px var(--shadow);border:1px solid rgba(201,184,232,0.12);">
           <div class="modal-label" style="margin-bottom:0.6rem;">選擇角色</div>
           <select class="modal-select" id="theater-char-select" style="margin-bottom:0.8rem;" onchange="syncTheaterTabFromSelect(this.value)"></select>
-          <div class="modal-label" style="margin-bottom:0.6rem;">劇場情境描述</div>
+          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem;">
+            <div class="modal-label" style="margin-bottom:0;flex:1;">劇場情境描述</div>
+            <div style="display:flex;gap:0.3rem;align-items:center;">
+              <select class="modal-select" id="theater-template-select" style="font-size:0.75rem;padding:0.3rem 0.5rem;border-radius:8px;width:auto;" onchange="loadTheaterTemplate(this.value)">
+                <option value="">📋 載入模板...</option>
+              </select>
+              <button onclick="openTheaterTemplateManager()" style="padding:0.3rem 0.55rem;background:var(--lavender-soft);border:1px solid var(--lavender-light);border-radius:8px;font-size:0.75rem;cursor:pointer;color:var(--text-mid);white-space:nowrap;" title="管理模板">⚙️</button>
+            </div>
+          </div>
           <textarea class="modal-textarea" id="theater-prompt" style="min-height:90px;margin-bottom:0.8rem;" placeholder="例：我們在咖啡廳突然下起大雨，被迫長時間等待...&#10;例：角色在我不知情的情況下一直暗戀著我...&#10;例：我生氣了，角色試圖哄我..."></textarea>
           <div class="modal-label" style="margin-bottom:0.6rem;">文風</div>
           <div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.8rem;" id="theater-style-picker">
@@ -2245,7 +2405,10 @@ body {
 
 <!-- ─── BOTTOM NAV ─── -->
 <nav id="bottom-nav">
-  <button class="bottom-nav-btn active" onclick="switchPage('chat')" id="bnav-chat">
+  <button class="bottom-nav-btn active" onclick="switchPage('foyer')" id="bnav-foyer">
+    <span class="icon">🏠</span><span>玄關</span>
+  </button>
+  <button class="bottom-nav-btn" onclick="switchPage('chat')" id="bnav-chat">
     <span class="icon">💬</span><span>聊天</span>
   </button>
   <button class="bottom-nav-btn" onclick="switchPage('chars')" id="bnav-chars">

@@ -99,10 +99,10 @@ Stay in character. Be warm, casual, and emotionally real.`,
 // ─── INDEXEDDB ─────────────────────────────────────
 function initDB() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open('erhabene', 7);
+    const req = indexedDB.open('erhabene', 8);
     req.onupgradeneeded = e => {
       const db = e.target.result;
-      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries','relationships','moments','fragments','dailyReports'];
+      const ALL_STORES = ['chars','chats','personas','lorebook','socialPosts','diaryEntries','memory','settings','anniversaries','achievements','chatStats','theaterEntries','relationships','moments','fragments','dailyReports','theaterTemplates'];
       ALL_STORES.forEach(store => {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store, { keyPath: 'id' });
@@ -399,6 +399,156 @@ function enterApp() {
 
   // 節日/紀念日前端偵測：延遲執行讓 UI 先穩定
   setTimeout(checkSpecialDayBanners, 2000);
+
+  // 預設切換到玄關頁面
+  switchPage('foyer');
+}
+
+// ─── 玄關 FOYER ──────────────────────────────────────
+function renderFoyerPage() {
+  // 時鐘
+  updateFoyerClock();
+  if (!window._foyerClockInterval) {
+    window._foyerClockInterval = setInterval(updateFoyerClock, 10000);
+  }
+  // 狀態 badge
+  updateStatusBadgeDisplay();
+  // 派報亭
+  renderFoyerNewsstand();
+  // 核心角色
+  renderFoyerInnerCircle();
+}
+
+function updateFoyerClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const clockEl = document.getElementById('foyer-clock');
+  const dateEl = document.getElementById('foyer-date');
+  if (clockEl) clockEl.textContent = `${h}:${m}`;
+  if (dateEl) {
+    const days = ['週日','週一','週二','週三','週四','週五','週六'];
+    dateEl.textContent = `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日　${days[now.getDay()]}`;
+  }
+}
+
+function renderFoyerNewsstand() {
+  const container = document.getElementById('foyer-papers');
+  if (!container) return;
+
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setHours(0, 0, 0, 0);
+  const yStart = yesterday.getTime();
+  const yEnd   = yStart + 86400000;
+
+  // 找昨天有對話的角色（最多3個）
+  const charsWithYesterdayChat = state.chars.filter(char => {
+    return state.chats.some(c =>
+      c.charId === char.id &&
+      c.messages.some(m => m.time >= yStart && m.time < yEnd)
+    );
+  }).slice(0, 3);
+
+  if (charsWithYesterdayChat.length === 0) {
+    container.innerHTML = `<div style="font-size:0.78rem;color:rgba(255,255,255,0.3);padding:0.8rem 0;text-align:center;">昨天沒有互動，今天開始聊天吧</div>`;
+    return;
+  }
+
+  container.innerHTML = charsWithYesterdayChat.map(char => {
+    const readKey = `erh_foyer_report_read_${char.id}_${yesterday.toDateString()}`;
+    const isRead = !!localStorage.getItem(readKey);
+    const avHtml = isImgSrc(char.avatar)
+      ? `<img src="${char.avatar}" style="width:100%;height:100%;object-fit:cover;">`
+      : (char.avatar || '🌸');
+    return `
+      <div class="foyer-paper-card${isRead ? ' read' : ''}" onclick="openFoyerReport('${char.id}')">
+        ${!isRead ? '<div class="foyer-paper-unread"></div>' : ''}
+        <div style="width:38px;height:38px;border-radius:50%;overflow:hidden;background:linear-gradient(135deg,#c9b8e8,#b8cce8);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;">${avHtml}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.6rem;letter-spacing:0.12em;text-transform:uppercase;color:rgba(201,184,232,0.7);margin-bottom:0.1rem;">📰 觀測局早報</div>
+          <div style="font-size:0.82rem;color:rgba(255,255,255,0.88);font-weight:500;">${char.name} · 昨日觀測紀錄</div>
+          <div style="font-size:0.68rem;color:rgba(255,255,255,0.38);margin-top:0.1rem;">${isRead ? '已查看' : '點擊展開'}</div>
+        </div>
+        <div style="font-size:0.9rem;color:rgba(255,255,255,0.3);">›</div>
+      </div>`;
+  }).join('');
+}
+
+async function openFoyerReport(charId) {
+  const char = state.chars.find(c => c.id === charId);
+  if (!char) return;
+
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setHours(0, 0, 0, 0);
+  const yStart = yesterday.getTime();
+  const yEnd   = yStart + 86400000;
+  const readKey = `erh_foyer_report_read_${charId}_${yesterday.toDateString()}`;
+
+  // 標記已讀
+  localStorage.setItem(readKey, '1');
+  // 更新 UI
+  renderFoyerNewsstand();
+
+  // 查是否已有今天的早報快取
+  const reportKey = `${charId}_${new Date().toDateString()}`;
+  const cached = state.dailyReports[reportKey];
+  if (cached) {
+    showDailyReportModal(cached, char);
+    return;
+  }
+
+  // 尚未生成，取昨天訊息並生成
+  const yesterdayMsgs = state.chats
+    .filter(c => c.charId === charId)
+    .flatMap(c => c.messages)
+    .filter(m => m.time >= yStart && m.time < yEnd);
+
+  if (!yesterdayMsgs.length) {
+    showToast('昨天沒有對話記錄');
+    return;
+  }
+
+  showToast(`📰 生成 ${char.name} 的昨日早報…`);
+  const chat = state.chats.find(c => c.charId === charId);
+  if (chat) await generateDailyReport(charId, yesterdayMsgs, chat);
+}
+
+function renderFoyerInnerCircle() {
+  const container = document.getElementById('foyer-char-row');
+  if (!container) return;
+
+  // 最近 7 天互動最多的 1-2 個角色
+  const sevenDaysAgo = Date.now() - 7 * 86400000;
+  const charScores = state.chars.map(char => {
+    const msgs = state.chats
+      .filter(c => c.charId === char.id)
+      .flatMap(c => c.messages)
+      .filter(m => m.time >= sevenDaysAgo);
+    return { char, count: msgs.length };
+  }).filter(x => x.count > 0).sort((a,b) => b.count - a.count).slice(0,2);
+
+  if (charScores.length === 0) {
+    container.innerHTML = `<div style="font-size:0.75rem;color:rgba(255,255,255,0.3);">開始和角色聊天，他們會出現在這裡</div>`;
+    return;
+  }
+
+  container.innerHTML = charScores.map(({ char, count }) => {
+    const avHtml = isImgSrc(char.avatar)
+      ? `<img src="${char.avatar}" style="width:100%;height:100%;object-fit:cover;">`
+      : (char.avatar || '🌸');
+    // 找最近的聊天室
+    const latestChat = [...state.chats]
+      .filter(c => c.charId === char.id && c.messages.length > 0)
+      .sort((a,b) => b.messages[b.messages.length-1].time - a.messages[a.messages.length-1].time)[0];
+    return `
+      <div class="foyer-char-card" onclick="${latestChat ? `switchPage('chat');openChat('${latestChat.id}')` : `switchPage('chars')`}">
+        <div class="foyer-char-avatar">${avHtml}</div>
+        <div class="foyer-char-name">${char.name}</div>
+        <div class="foyer-char-sub">近7天 ${count} 則</div>
+      </div>`;
+  }).join('');
 }
 
 // 取得各功能的有效模型（若未設定則 fallback 到全域模型）
@@ -495,7 +645,9 @@ function switchPage(page) {
   sidebar.style.display = '';
   sidebar.classList.remove('mobile-open');
 
-  if (page === 'chat') {
+  if (page === 'foyer') {
+    renderFoyerPage();
+  } else if (page === 'chat') {
     sidebarTitle.textContent = '聊天';
     sidebarAddBtn.onclick = showAddChatOrChar;
     renderSidebar();
@@ -514,15 +666,20 @@ function switchPage(page) {
     renderCharsGrid();
   } else if (page === 'social') {
     renderSocialFeed();
+    // 今天未自動發文過，就靜默觸發
+    setTimeout(() => autoSilentSocialPost(), 1500);
   } else if (page === 'diary') {
     initDiary();
   } else if (page === 'theater') {
     renderTheaterCharSelect();
+    loadTheaterTemplates();
   } else if (page === 'achievements') {
     renderAchievementCharSelect();
     renderAchievements();
     renderMomentsGallery();
     renderFragmentGallery();
+    // 靜默嘗試補救失敗的碎片
+    setTimeout(() => retryPendingFragments().then(() => renderFragmentGallery()), 1000);
   }
 }
 
@@ -626,26 +783,31 @@ function renderSidebar(mode = 'chat') {
   list.innerHTML = '';
 
   if (mode === 'chat') {
-    // Group chats by char
-    const chatsByChar = {};
-    state.chats.forEach(chat => {
-      if (!chatsByChar[chat.charId]) chatsByChar[chat.charId] = [];
-      chatsByChar[chat.charId].push(chat);
-    });
-
     if (state.chats.length === 0) {
       list.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--text-light);font-size:0.82rem;">還沒有對話<br>新增角色後開始聊天</div>`;
       return;
     }
 
-    // Sort chats by last message time (fallback to creation time)
+    const ARCHIVE_DAYS = 5;
+    const archiveThreshold = Date.now() - ARCHIVE_DAYS * 24 * 60 * 60 * 1000;
+
+    // 分類：活躍 vs 封存
     const sortedChats = [...state.chats].sort((a,b) => {
       const aTime = a.messages.length ? a.messages[a.messages.length-1].time : (a.createdAt || 0);
       const bTime = b.messages.length ? b.messages[b.messages.length-1].time : (b.createdAt || 0);
       return bTime - aTime;
     });
 
-    sortedChats.forEach(chat => {
+    const activeChats   = sortedChats.filter(c => {
+      const lastTime = c.messages.length ? c.messages[c.messages.length-1].time : (c.createdAt || 0);
+      return lastTime >= archiveThreshold || c.id === state.activeChat;
+    });
+    const archivedChats = sortedChats.filter(c => {
+      const lastTime = c.messages.length ? c.messages[c.messages.length-1].time : (c.createdAt || 0);
+      return lastTime < archiveThreshold && c.id !== state.activeChat;
+    });
+
+    const renderChatItem = (chat) => {
       const char = state.chars.find(c => c.id === chat.charId);
       if (!char) return;
       const lastMsg = chat.messages[chat.messages.length-1];
@@ -670,7 +832,39 @@ function renderSidebar(mode = 'chat') {
       `;
       div.onclick = () => openChat(chat.id);
       list.appendChild(div);
-    });
+    };
+
+    // 渲染活躍聊天
+    activeChats.forEach(renderChatItem);
+
+    // 渲染封存區（可折疊）
+    if (archivedChats.length > 0) {
+      const archiveKey = 'erh_sidebar_archive_open';
+      const isOpen = localStorage.getItem(archiveKey) === '1';
+
+      const archiveHeader = document.createElement('div');
+      archiveHeader.style.cssText = `
+        display:flex;align-items:center;gap:0.4rem;
+        padding:0.5rem 1rem;margin-top:0.4rem;
+        font-size:0.65rem;letter-spacing:0.1em;text-transform:uppercase;
+        color:var(--text-light);cursor:pointer;
+        border-top:1px solid rgba(201,184,232,0.15);
+      `;
+      archiveHeader.innerHTML = `
+        <span style="flex:1;">📦 封存（${archivedChats.length}）</span>
+        <span id="archive-chevron" style="transition:transform 0.2s;transform:rotate(${isOpen?'90':'0'}deg);">›</span>
+      `;
+      archiveHeader.onclick = () => {
+        const nowOpen = localStorage.getItem(archiveKey) === '1';
+        localStorage.setItem(archiveKey, nowOpen ? '0' : '1');
+        renderSidebar();
+      };
+      list.appendChild(archiveHeader);
+
+      if (isOpen) {
+        archivedChats.forEach(renderChatItem);
+      }
+    }
   }
 }
 
@@ -1233,6 +1427,10 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
 角色作息：${char.schedule.desc}
 請根據以上時間和作息自然地融入回應中（例如提到剛起床、在上班、剛下班、準備睡覺等），不需要每次都明說，自然帶到即可。`);
   }
+
+  // 混合式用戶狀態注入
+  const userStatusPrompt = getUserStatusPrompt();
+  if (userStatusPrompt) systemParts.push('\n' + userStatusPrompt);
   if (persona) systemParts.push(`\n[User Persona]\n你正在和 ${persona.name} 說話。${persona.desc || ''}`);
 
   // Lorebook injection
@@ -2378,8 +2576,7 @@ function editChar(charId) {
 
   document.getElementById('char-desc-input').value = char.desc || '';
   document.getElementById('char-first-msg-input').value = char.firstMsg || '';
-  const personaSel = document.getElementById('char-persona-select');
-  if (personaSel) personaSel.value = char.personaId || '';
+  // persona select 會在 openModal 後設值，此處不設（避免時序問題）
   // 填入作息設定
   const schedInput = document.getElementById('char-schedule-input');
   if (schedInput) schedInput.value = char.schedule?.desc || '';
@@ -2398,6 +2595,9 @@ function editChar(charId) {
     document.getElementById('char-manual').classList.add('active');
   }
   openModal('add-char-modal');
+  // 必須在openModal之後設值，因為openModal會重建select options
+  const personaSelAfter = document.getElementById('char-persona-select');
+  if (personaSelAfter) personaSelAfter.value = char.personaId || '';
   // 編輯模式顯示刪除按鈕
   const deleteBtn = document.getElementById('delete-char-btn');
   if (deleteBtn) deleteBtn.style.display = '';
@@ -2668,11 +2868,7 @@ function renderSocialFeed() {
   html += `
     <div class="post-compose">
       <textarea class="compose-input" id="compose-input" placeholder="分享這一刻..."></textarea>
-      <div class="compose-actions">
-        <select class="compose-char-select" id="compose-char-sel">
-          <option value="user">以自己發文</option>
-          ${state.chars.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
-        </select>
+      <div class="compose-actions" style="justify-content:flex-end;">
         <div style="display:flex;gap:0.4rem;">
           <button class="compose-post-btn" style="background:var(--lavender-soft);color:var(--text-mid);border:1px solid var(--lavender-light);" onclick="openModal('social-compose-modal');document.getElementById('social-compose-title').textContent='✦ 讓角色發文'">AI發文</button>
           <button class="compose-post-btn" onclick="userPostSocial()">發布</button>
@@ -2752,15 +2948,13 @@ function renderComments(post) {
 async function userPostSocial() {
   const content = document.getElementById('compose-input').value.trim();
   if (!content) return;
-  const charId = document.getElementById('compose-char-sel').value;
-  const char = charId !== 'user' ? state.chars.find(c => c.id === charId) : null;
-
+  // 用戶發文（不選角色，以 user 身份發布）
   const post = {
     id: uid(),
-    charId: char?.id || null,
+    charId: null,
     platform: 'social',
     content,
-    authorName: char?.name || 'You',
+    authorName: 'You',
     imageUrl: null,
     likes: 0,
     comments: [],
@@ -2772,7 +2966,7 @@ async function userPostSocial() {
   document.getElementById('compose-input').value = '';
   renderSocialFeed();
   // user 自己發文時，所有角色自動留言
-  if (!char && state.chars.length) {
+  if (state.chars.length) {
     setTimeout(() => allCharsReplyToPost(post.id), 1500);
   }
 }
@@ -2832,6 +3026,50 @@ function buildSocialImagePrompt(option, char, persona, postContent) {
   const viewPart = isSelfie ? 'POV selfie composition, character looking directly at viewer. ' : '';
 
   return `${refNote}Style: ${styleDesc}. ${viewPart}Characters: ${charPart}${personaPart}. ${sceneDesc}. NOT photorealistic. NOT a photograph. Pure illustrated art only. No text, no watermarks, no logos.`;
+}
+
+// 開啟社群頁面時，若今天還沒有任何角色發過文，靜默自動發一篇
+async function autoSilentSocialPost() {
+  if (!state.apiKey || !state.chars.length) return;
+  const todayStr = new Date().toDateString();
+  const autoKey = `erh_social_auto_${todayStr}`;
+  if (localStorage.getItem(autoKey)) return;
+
+  // 選最近有聊天的角色
+  const charWithChat = state.chars.find(char => {
+    const chats = state.chats.filter(c => c.charId === char.id);
+    return chats.some(c => c.messages.length > 0);
+  });
+  if (!charWithChat) return;
+
+  const char = charWithChat;
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const charChats = state.chats.filter(c => c.charId === char.id);
+  const recentMsgs = charChats.flatMap(c => c.messages).sort((a,b) => b.time - a.time).slice(0,12).reverse()
+    .map(m => `${m.role === 'user' ? (persona?.name||'User') : char.name}: ${m.content}`).join('\n');
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('social')}:generateContent?key=${state.apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}` }] },
+        contents: [{ role: 'user', parts: [{ text: `請以第一人稱在社群動態上發一篇自然的生活感貼文，根據你的個性自由發揮。${recentMsgs ? `\n\n[最近對話記錄，感受情緒但不要直接引用]\n${recentMsgs}` : ''}
+\n字數 150-300 字，語氣真實，只輸出正文。` }] }],
+        generationConfig: { temperature: 1.0, maxOutputTokens: 2000 }
+      })
+    });
+    const data = await res.json();
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!content) return;
+    const post = { id: uid(), charId: char.id, platform: 'social', content, authorName: char.name, imageUrl: null, likes: 0, comments: [], time: Date.now() };
+    state.socialPosts.push(post);
+    await dbPut('socialPosts', post);
+    localStorage.setItem(autoKey, '1');
+    renderSocialFeed();
+    showToast(`✦ ${char.name} 今天發了一篇動態`);
+  } catch(e) { /* silent */ }
 }
 
 async function aiPostSocial() {
@@ -3693,14 +3931,20 @@ async function scoreConversation(chatId, charId) {
   if (now - rel.lastScoreAt < 3 * 60 * 1000) return;
   rel.lastScoreAt = now;
 
-  // 每天積分上限 +15（防止刷分）
+  // 每天積分上限 +25（防止刷分）
   const todayKey = new Date().toDateString();
   const todayScoreKey = `erh_relscore_${charId}_${todayKey}`;
   const todayScore = parseInt(localStorage.getItem(todayScoreKey) || '0');
-  if (todayScore >= 15) return;
+  if (todayScore >= 25) return;
 
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const userName = persona?.name || '使用者';
   const recentMsgs = chat.messages.slice(-6)
-    .map(m => `${m.role === 'user' ? '我' : char.name}: ${m.content}`).join('\n');
+    .map(m => `${m.role === 'user' ? userName : char.name}: ${m.content}`).join('\n');
+
+  const charContext = char.desc ? `角色【${char.name}】設定：${char.desc.slice(0, 150)}` : `角色：${char.name}`;
+  const userContext = persona ? `使用者【${userName}】設定：${persona.desc?.slice(0, 100) || '無'}` : `使用者：${userName}`;
+  const relLv = getRelLevel(charId);
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
@@ -3708,15 +3952,19 @@ async function scoreConversation(chatId, charId) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: `以下是兩人的對話片段：
+        contents: [{ parts: [{ text: `${charContext}
+${userContext}
+目前關係階段：${relLv.label}
+
+以下是兩人最近的對話：
 ${recentMsgs}
 
-請評估這段對話對兩人感情關係的影響，回傳一個 JSON：
+請根據以上角色設定與關係背景，評估這段對話對兩人感情關係的影響，回傳 JSON：
 {"score": <整數，-3 到 +3>, "reason": "<一句話說明>"}
-- +3：非常正面，有深度連結、真誠交流、心動時刻
+- +3：非常正面，深度連結、真誠交流、心動時刻
 - +1/+2：正面，氣氛良好
 - 0：中性普通對話
-- -1/-2：有誤解、冷漠或距離感
+- -1/-2：誤解、冷漠或距離感
 - -3：嚴重衝突或傷害
 只回傳 JSON，不加其他文字。` }] }],
         generationConfig: { temperature: 0.3, maxOutputTokens: 1000 }
@@ -3729,7 +3977,7 @@ ${recentMsgs}
     const delta = Math.max(-3, Math.min(3, parseInt(score) || 0));
     if (delta !== 0) {
       rel.score = Math.max(0, rel.score + delta);
-      const newDayScore = Math.max(0, Math.min(15, todayScore + Math.max(0, delta)));
+      const newDayScore = Math.max(0, Math.min(25, todayScore + Math.max(0, delta)));
       localStorage.setItem(todayScoreKey, newDayScore.toString());
       saveRelData(charId);
       updateRelDisplay(charId);
@@ -4323,7 +4571,6 @@ async function generateFragment(charId, threshold) {
   const existing = (state.fragments[charId] || []).map(f => f.theme).join('、');
   const relLv = getRelLevel(charId);
 
-  // 決定碎片類型
   const types = ['monologue','letter','memory','observation','confession'];
   const typeLabels = { monologue:'內心獨白', letter:'未寄出的信', memory:'記憶碎片', observation:'偷偷觀察', confession:'心裡話' };
   const chosenType = types[Math.floor(Math.random() * types.length)];
@@ -4350,7 +4597,7 @@ ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
     });
     const data = await res.json();
     const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (!content) return;
+    if (!content) throw new Error('empty response');
 
     const fragment = {
       id: uid(),
@@ -4366,9 +4613,33 @@ ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
     state.fragments[charId].push(fragment);
     await dbPut('fragments', { id: charId, data: state.fragments[charId] });
 
-    // 顯示解鎖通知
+    // 清除 pending 紀錄（若之前失敗過）
+    const pendingKey = `erh_frag_pending_${charId}_${threshold}`;
+    localStorage.removeItem(pendingKey);
+
     showFragmentUnlockNotice(char, fragment);
-  } catch(e) { /* silent */ }
+  } catch(e) {
+    // 記錄失敗，讓用戶可以手動補救
+    const pendingKey = `erh_frag_pending_${charId}_${threshold}`;
+    localStorage.setItem(pendingKey, '1');
+    console.warn('[Fragment] 生成失敗，已記錄 pending:', charId, threshold);
+  }
+}
+
+// 嘗試補救所有 pending 碎片（在畫廊頁面載入時呼叫）
+async function retryPendingFragments() {
+  if (!state.apiKey) return;
+  for (const char of state.chars) {
+    const existing = (state.fragments[char.id] || []).map(f => f.scoreThreshold);
+    const rel = getRelData(char.id);
+    for (const threshold of FRAGMENT_THRESHOLDS) {
+      const pendingKey = `erh_frag_pending_${char.id}_${threshold}`;
+      if (localStorage.getItem(pendingKey) && rel.score >= threshold && !existing.includes(threshold)) {
+        await generateFragment(char.id, threshold);
+        await delay(500); // 避免同時發太多請求
+      }
+    }
+  }
 }
 
 function showFragmentUnlockNotice(char, fragment) {
@@ -4440,6 +4711,7 @@ function renderFragmentGallery() {
   allThresholds.forEach(threshold => {
     const frag = fragments.find(f => f.scoreThreshold === threshold);
     const depthHint = FRAGMENT_DEPTH_HINTS[threshold] || '碎片';
+    const isPending = !!localStorage.getItem(`erh_frag_pending_${charId}_${threshold}`);
     if (frag) {
       html += `
         <div class="fragment-card unlocked" onclick="showFragmentDetail('${charId}','${frag.id}')">
@@ -4448,6 +4720,14 @@ function renderFragmentGallery() {
           <div style="font-size:0.7rem;font-weight:700;color:#3d3450;margin-bottom:0.15rem;">${frag.theme}</div>
           <div style="font-size:0.62rem;color:#a89bb5;">${frag.typeLabel}</div>
           <div style="font-size:0.58rem;color:var(--lavender);margin-top:0.3rem;">好感 ${threshold}</div>
+        </div>`;
+    } else if (isPending && score >= threshold) {
+      // 生成失敗的 pending 狀態 — 顯示重試按鈕
+      html += `
+        <div class="fragment-card locked" style="border:1.5px dashed rgba(232,160,160,0.5);" onclick="retryFragmentSingle('${charId}',${threshold},this)">
+          <div style="font-size:1.4rem;margin-bottom:0.4rem;opacity:0.7;">⚠️</div>
+          <div style="font-size:0.7rem;font-weight:700;color:var(--text-mid);margin-bottom:0.15rem;">${depthHint}</div>
+          <div style="font-size:0.58rem;color:#e8a0a0;margin-top:0.3rem;">生成失敗 · 點擊重試</div>
         </div>`;
     } else {
       const pct = Math.min(100, Math.round((score / threshold) * 100));
@@ -4464,6 +4744,13 @@ function renderFragmentGallery() {
   });
   html += '</div>';
   el.innerHTML = html;
+}
+
+async function retryFragmentSingle(charId, threshold, el) {
+  if (el) { el.style.opacity = '0.5'; el.style.pointerEvents = 'none'; }
+  showToast('🔮 重新生成碎片中…');
+  await generateFragment(charId, threshold);
+  renderFragmentGallery();
 }
 
 function showFragmentDetail(charId, fragId) {
@@ -4631,6 +4918,135 @@ function openApiSettings() {
   openModal('model-settings-modal');
 }
 
+
+// ─── 混合式用戶狀態系統 ──────────────────────────────
+// 狀態存在 localStorage，格式：
+// erh_user_status = JSON { mode: 'auto'|'travel'|'wfh'|'sick'|'custom', detail: string, since: timestamp }
+
+function getUserStatus() {
+  try {
+    const raw = localStorage.getItem('erh_user_status');
+    return raw ? JSON.parse(raw) : { mode: 'auto' };
+  } catch(e) { return { mode: 'auto' }; }
+}
+
+function setUserStatus(mode, detail = '') {
+  localStorage.setItem('erh_user_status', JSON.stringify({ mode, detail, since: Date.now() }));
+  updateStatusBadgeDisplay();
+}
+
+function getUserStatusPrompt() {
+  const status = getUserStatus();
+  const hour = new Date().getHours();
+
+  if (status.mode === 'auto') {
+    if (hour >= 8 && hour < 16) {
+      return `[系統狀態：使用者目前正在上班中。請表現出陪伴與體貼的態度，偶爾可以溫柔關心工作狀況，提醒她喝水或休息，但不要過度打擾。]`;
+    } else if (hour >= 16 && hour < 23) {
+      return `[系統狀態：使用者剛下班或正在放鬆中。可以更輕鬆活潑地聊天，關心今天過得怎樣，不需要顧慮打擾工作。]`;
+    } else {
+      return `[系統狀態：深夜時分，使用者還沒睡。說話可以更柔和、親密，帶點關心和陪伴的感覺，也可以自然提到夜深了。]`;
+    }
+  }
+
+  const overrideLabels = {
+    travel:  (d) => `使用者目前出差/旅行中${d ? `，地點：${d}` : ''}。請把這個背景帶入對話，偶爾可以提到思念或期待她回來。`,
+    wfh:     (_) => `使用者今天在家上班（WFH）。可以比平時稍微多一點互動，偶爾送上小確幸的問候。`,
+    sick:    (_) => `使用者今天身體不舒服或在休息。請表現出關心和溫柔，不要說太刺激或費神的話題。`,
+    custom:  (d) => d || '',
+  };
+
+  const fn = overrideLabels[status.mode];
+  if (!fn) return '';
+  const text = fn(status.detail);
+  return text ? `[系統狀態：${text}]` : '';
+}
+
+function getStatusBadgeLabel() {
+  const status = getUserStatus();
+  const hour = new Date().getHours();
+  if (status.mode === 'auto') {
+    if (hour >= 8 && hour < 16) return '🕒 上班中';
+    if (hour >= 16 && hour < 23) return '🌇 下班後';
+    return '🌙 深夜';
+  }
+  const labels = { travel:'🧳 出差中', wfh:'🏠 在家上班', sick:'🤒 休息中', custom:'✏️ 自訂' };
+  return labels[status.mode] || '🕒 自動';
+}
+
+function updateStatusBadgeDisplay() {
+  document.querySelectorAll('.user-status-badge').forEach(el => {
+    el.textContent = getStatusBadgeLabel();
+  });
+}
+
+function openStatusMenu() {
+  document.getElementById('status-menu-overlay')?.remove();
+  const status = getUserStatus();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'status-menu-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9800;display:flex;align-items:flex-end;justify-content:center;background:rgba(40,30,60,0.3);backdrop-filter:blur(4px);';
+
+  overlay.innerHTML = `
+    <div id="status-menu-panel" style="
+      background:var(--white);border-radius:24px 24px 0 0;
+      width:min(480px,100vw);padding:1.2rem 1.2rem max(1.2rem,env(safe-area-inset-bottom));
+      box-shadow:0 -8px 40px rgba(100,80,140,0.18);
+      animation:slideUp 0.25s cubic-bezier(0.25,0.46,0.45,0.94);
+    ">
+      <div style="display:flex;justify-content:center;margin-bottom:0.8rem;">
+        <div style="width:36px;height:4px;background:rgba(201,184,232,0.4);border-radius:2px;"></div>
+      </div>
+      <div style="font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-light);margin-bottom:0.8rem;">用戶狀態</div>
+
+      <div style="display:flex;flex-direction:column;gap:0.4rem;margin-bottom:1rem;">
+        ${[
+          { mode:'auto',   label:'🕒 自動日常', desc:'依時間自動切換上班/下班/深夜', hasDetail:false },
+          { mode:'travel', label:'🧳 出差/旅行中', desc:'啟用後角色會記得你不在家', hasDetail:true, placeholder:'出差地點（例：東京）' },
+          { mode:'wfh',    label:'🏠 在家上班', desc:'WFH 模式', hasDetail:false },
+          { mode:'sick',   label:'🤒 身體不舒服', desc:'角色會溫柔關心你', hasDetail:false },
+          { mode:'custom', label:'✏️ 自訂狀態', desc:'輸入任何描述注入系統提示', hasDetail:true, placeholder:'例：在準備考試，請幫我加油打氣' },
+        ].map(opt => `
+          <div style="display:flex;flex-direction:column;gap:0.3rem;">
+            <button onclick="selectStatus('${opt.mode}')" style="
+              display:flex;align-items:center;gap:0.7rem;
+              padding:0.65rem 0.9rem;
+              background:${status.mode===opt.mode ? 'linear-gradient(135deg,rgba(201,184,232,0.2),rgba(184,204,232,0.12))' : 'var(--lavender-soft)'};
+              border:${status.mode===opt.mode ? '1.5px solid var(--lavender)' : '1px solid rgba(201,184,232,0.2)'};
+              border-radius:14px;font-family:inherit;cursor:pointer;text-align:left;width:100%;
+            ">
+              <span style="font-size:1rem;width:24px;text-align:center;">${opt.label.split(' ')[0]}</span>
+              <div style="flex:1;">
+                <div style="font-size:0.85rem;font-weight:${status.mode===opt.mode?'600':'400'};color:var(--text-dark);">${opt.label.split(' ').slice(1).join(' ')}</div>
+                <div style="font-size:0.68rem;color:var(--text-light);">${opt.desc}</div>
+              </div>
+              ${status.mode===opt.mode ? '<span style="color:var(--lavender);font-size:0.9rem;">✓</span>' : ''}
+            </button>
+            ${opt.hasDetail && status.mode===opt.mode ? `
+              <input id="status-detail-input" class="modal-input" placeholder="${opt.placeholder||''}" value="${status.detail||''}"
+                style="margin-left:0.5rem;" oninput="updateStatusDetail(this.value)">` : ''}
+          </div>`).join('')}
+      </div>
+      <button onclick="document.getElementById('status-menu-overlay').remove()" style="width:100%;padding:0.7rem;background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.2);border-radius:14px;font-family:inherit;font-size:0.85rem;cursor:pointer;color:var(--text-mid);">關閉</button>
+    </div>
+  `;
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+function selectStatus(mode) {
+  const status = getUserStatus();
+  setUserStatus(mode, mode === status.mode ? status.detail : '');
+  // 重新渲染 menu
+  openStatusMenu();
+}
+
+function updateStatusDetail(val) {
+  const status = getUserStatus();
+  setUserStatus(status.mode, val);
+}
 
 function toggleDarkMode() {
   state.darkMode = !state.darkMode;
@@ -5019,6 +5435,11 @@ function updateCharPersonaSelects() {
   if (sel) {
     sel.innerHTML = '<option value="">不綁定</option>' +
       state.personas.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    // 若目前是編輯模式，restore 當前角色的 personaId
+    if (state.editingCharId) {
+      const char = state.chars.find(c => c.id === state.editingCharId);
+      if (char) sel.value = char.personaId || '';
+    }
   }
 }
 
@@ -5457,6 +5878,123 @@ async function refreshAchievements() {
 let theaterLastChar = null;
 let theaterLastPromptText = '';
 let theaterCharFilter = null; // null = 跟隨 select；charId = 歷史篩選
+
+// ─── 小劇場模板系統 ──────────────────────────────────
+let _theaterTemplates = []; // 記憶體快取
+
+async function loadTheaterTemplates() {
+  try {
+    _theaterTemplates = await dbGetAll('theaterTemplates');
+  } catch(e) { _theaterTemplates = []; }
+  renderTheaterTemplateSelect();
+}
+
+function renderTheaterTemplateSelect() {
+  const sel = document.getElementById('theater-template-select');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">📋 載入模板...</option>' +
+    _theaterTemplates.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+}
+
+function loadTheaterTemplate(id) {
+  if (!id) return;
+  const tpl = _theaterTemplates.find(t => t.id === id);
+  if (!tpl) return;
+  const charSel = document.getElementById('theater-char-select');
+  const charId = charSel?.value || '';
+  const char = state.chars.find(c => c.id === charId);
+  const charName = char?.name || '{{char}}';
+  const prompt = tpl.prompt.replace(/\{\{char\}\}/g, charName);
+  document.getElementById('theater-prompt').value = prompt;
+  // reset select
+  document.getElementById('theater-template-select').value = '';
+}
+
+function openTheaterTemplateManager() {
+  document.getElementById('theater-tpl-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'theater-tpl-modal';
+
+  const renderList = () => {
+    return _theaterTemplates.map(t => `
+      <div style="display:flex;align-items:flex-start;gap:0.6rem;padding:0.7rem;background:var(--lavender-soft);border-radius:12px;border:1px solid rgba(201,184,232,0.2);">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.82rem;font-weight:600;color:var(--text-dark);margin-bottom:0.2rem;">${t.name}</div>
+          <div style="font-size:0.72rem;color:var(--text-mid);line-height:1.5;white-space:pre-wrap;">${t.prompt.slice(0,80)}${t.prompt.length>80?'…':''}</div>
+        </div>
+        <button onclick="deleteTheaterTemplate('${t.id}')" style="background:none;border:none;color:var(--text-light);cursor:pointer;font-size:0.9rem;flex-shrink:0;padding:0.1rem;">🗑️</button>
+      </div>`).join('');
+  };
+
+  modal.innerHTML = `
+    <div class="modal" style="width:min(480px,94vw);max-height:85vh;display:flex;flex-direction:column;">
+      <div class="modal-header" style="flex-shrink:0;">
+        <div class="modal-title">📋 小劇場模板庫</div>
+        <button class="modal-close" onclick="document.getElementById('theater-tpl-modal').remove()">×</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:0.6rem;" id="tpl-list">
+        ${_theaterTemplates.length ? renderList() : '<div style="text-align:center;color:var(--text-light);padding:1.5rem;font-size:0.82rem;">還沒有模板，新增第一個吧</div>'}
+      </div>
+      <div style="flex-shrink:0;border-top:1px solid rgba(201,184,232,0.15);padding:1rem;display:flex;flex-direction:column;gap:0.5rem;">
+        <div style="font-size:0.72rem;color:var(--text-light);margin-bottom:0.2rem;">新增模板（支援 {{char}} 自動代入角色名）</div>
+        <input class="modal-input" id="tpl-name-input" placeholder="模板名稱（例：下雨天被困咖啡廳）">
+        <textarea class="modal-textarea" id="tpl-prompt-input" style="min-height:70px;" placeholder="情境描述，使用 {{char}} 代表角色名..."></textarea>
+        <button onclick="saveTheaterTemplate()" style="padding:0.6rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:12px;color:white;font-family:inherit;font-size:0.85rem;cursor:pointer;font-weight:500;">＋ 新增模板</button>
+      </div>
+    </div>
+  `;
+
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+}
+
+async function saveTheaterTemplate() {
+  const name = document.getElementById('tpl-name-input').value.trim();
+  const prompt = document.getElementById('tpl-prompt-input').value.trim();
+  if (!name || !prompt) { showToast('請填寫名稱和情境描述'); return; }
+  const tpl = { id: uid(), name, prompt, createdAt: Date.now() };
+  _theaterTemplates.push(tpl);
+  await dbPut('theaterTemplates', tpl);
+  document.getElementById('tpl-name-input').value = '';
+  document.getElementById('tpl-prompt-input').value = '';
+  // 更新列表
+  const listEl = document.getElementById('tpl-list');
+  if (listEl) {
+    listEl.innerHTML = _theaterTemplates.map(t => `
+      <div style="display:flex;align-items:flex-start;gap:0.6rem;padding:0.7rem;background:var(--lavender-soft);border-radius:12px;border:1px solid rgba(201,184,232,0.2);">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.82rem;font-weight:600;color:var(--text-dark);margin-bottom:0.2rem;">${t.name}</div>
+          <div style="font-size:0.72rem;color:var(--text-mid);line-height:1.5;">${t.prompt.slice(0,80)}${t.prompt.length>80?'…':''}</div>
+        </div>
+        <button onclick="deleteTheaterTemplate('${t.id}')" style="background:none;border:none;color:var(--text-light);cursor:pointer;font-size:0.9rem;flex-shrink:0;padding:0.1rem;">🗑️</button>
+      </div>`).join('');
+  }
+  renderTheaterTemplateSelect();
+  showToast('✓ 模板已儲存');
+}
+
+async function deleteTheaterTemplate(id) {
+  if (!confirm('確認刪除此模板？')) return;
+  _theaterTemplates = _theaterTemplates.filter(t => t.id !== id);
+  await dbDelete('theaterTemplates', id);
+  renderTheaterTemplateSelect();
+  // 刷新 modal 列表
+  const listEl = document.getElementById('tpl-list');
+  if (listEl) {
+    listEl.innerHTML = _theaterTemplates.length
+      ? _theaterTemplates.map(t => `
+          <div style="display:flex;align-items:flex-start;gap:0.6rem;padding:0.7rem;background:var(--lavender-soft);border-radius:12px;border:1px solid rgba(201,184,232,0.2);">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:0.82rem;font-weight:600;color:var(--text-dark);margin-bottom:0.2rem;">${t.name}</div>
+              <div style="font-size:0.72rem;color:var(--text-mid);line-height:1.5;">${t.prompt.slice(0,80)}${t.prompt.length>80?'…':''}</div>
+            </div>
+            <button onclick="deleteTheaterTemplate('${t.id}')" style="background:none;border:none;color:var(--text-light);cursor:pointer;font-size:0.9rem;flex-shrink:0;padding:0.1rem;">🗑️</button>
+          </div>`).join('')
+      : '<div style="text-align:center;color:var(--text-light);padding:1.5rem;font-size:0.82rem;">還沒有模板</div>';
+  }
+}
 
 function renderTheaterCharSelect() {
   const sel = document.getElementById('theater-char-select');

@@ -1,7 +1,10 @@
+// ── 台灣繁中語言指令（所有 prompt 共用） ───────────────
+const TW_LANG_INSTRUCTION = `語言要求：請使用台灣繁體中文回覆，語感自然口語，符合台灣日常用語習慣。\n禁止使用中國大陸用語（如：視頻→影片、軟件→軟體、點擊→點選、鏈接→連結、獲取→取得、打卡除外）。`;
+
 // ── 對話風格模板 ─────────────────────────────────────
 const PROMPT_TEMPLATES = {
   line: `You are {{char}}, a living, breathing person chatting with {{user}} via LINE messenger.
-Reply ONLY in Traditional Chinese.
+請使用台灣繁體中文回覆，語感自然口語，符合台灣日常用語習慣。禁止使用中國大陸用語（如：視頻→影片、軟件→軟體、點擊→點選、鏈接→連結）。
 
 CRITICAL formatting rule — you MUST split your reply into multiple separate LINE messages:
 - Each message = one short thought, one emotion, or one sentence (1–2 sentences max)
@@ -12,7 +15,7 @@ Do NOT write one long paragraph. Do NOT use asterisks for actions. Use (括號) 
 Stay in character. Be warm, casual, and emotionally real.`,
 
   prose: `You are {{char}}, talking with {{user}} in real life or a narrative setting.
-Reply ONLY in Traditional Chinese.
+請使用台灣繁體中文回覆，語感自然口語，符合台灣日常用語習慣。禁止使用中國大陸用語（如：視頻→影片、軟件→軟體、點擊→點選、鏈接→連結）。
 
 Response style:
 - Write one rich, natural response (3–7 sentences)
@@ -45,7 +48,22 @@ let state = {
   chats: [],        // [{id, charId, title, messages:[]}]
   personas: [],     // [{id, name, desc}]
   lorebook: [],     // [{id, keywords:[], content, enabled}]
-  systemPrompt: PROMPT_TEMPLATES.line, // 預設使用 LINE 風格模板，避免與 PROMPT_TEMPLATES 不同步
+  systemPrompt: `You are {{char}}, a living, breathing person chatting with {{user}} via LINE messenger.
+請使用台灣繁體中文回覆，語感自然口語，符合台灣日常用語習慣。禁止使用中國大陸用語（如：視頻→影片、軟件→軟體、點擊→點選、鏈接→連結）。
+
+CRITICAL formatting rule — you MUST split your reply into multiple separate LINE messages:
+- Each message = one short thought, one emotion, or one sentence (1–2 sentences max)
+- Separate each message with a blank line (\n\n)
+- Send 2–4 messages total per response, like a real person texting
+- Example of correct format:
+  哎你今天怎麼樣？
+
+  我一直在想你欸
+
+  你吃飯了沒
+
+Do NOT write one long paragraph. Do NOT use asterisks for actions. Use (括號) for expressions/stickers.
+Stay in character. Be warm, casual, and emotionally real.`,
   jailbreak: '',
   jailbreakPosition: 'before_last',
   regexRules: '',
@@ -688,23 +706,19 @@ function renderMobileChatList() {
       <div style="padding:3rem 1.5rem;text-align:center;color:var(--text-light);">
         <div style="font-size:2.5rem;margin-bottom:1rem;">🌸</div>
         <div style="font-size:0.9rem;">還沒有對話</div>
-        <button onclick="switchPage('chars')" style="margin-top:1rem;padding:0.5rem 1.2rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:14px;color:white;font-family:inherit;font-size:0.82rem;cursor:pointer;">＋ 新增角色</button>
+        <div style="font-size:0.78rem;margin-top:0.5rem;">前往「角色」頁面新增角色</div>
       </div>`;
     return;
   }
 
-  const sortedChats = [...state.chats].sort((a, b) => getChatLastTime(b) - getChatLastTime(a));
+  // 按最後訊息時間排序（和 sidebar 一致）
+  const sortedChats = [...state.chats].sort((a, b) => {
+    const aTime = a.messages.length ? a.messages[a.messages.length - 1].time : (a.createdAt || 0);
+    const bTime = b.messages.length ? b.messages[b.messages.length - 1].time : (b.createdAt || 0);
+    return bTime - aTime;
+  });
 
-  let html = `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem 0.4rem;">
-      <div style="font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>
-      <button onclick="switchPage('chars')" style="
-        display:flex;align-items:center;gap:0.3rem;
-        background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.3);
-        border-radius:10px;padding:0.3rem 0.65rem;
-        font-family:inherit;font-size:0.72rem;color:var(--text-mid);cursor:pointer;
-      ">🌸 角色</button>
-    </div>`;
+  let html = `<div style="padding:0.8rem 1rem 0.4rem;font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>`;
 
   sortedChats.forEach(chat => {
     const char = state.chars.find(c => c.id === chat.charId);
@@ -782,14 +796,18 @@ function renderSidebar(mode = 'chat') {
 
     // 分類：活躍 vs 封存
     const sortedChats = [...state.chats].sort((a,b) => {
-      return getChatLastTime(b) - getChatLastTime(a);
+      const aTime = a.messages.length ? a.messages[a.messages.length-1].time : (a.createdAt || 0);
+      const bTime = b.messages.length ? b.messages[b.messages.length-1].time : (b.createdAt || 0);
+      return bTime - aTime;
     });
 
     const activeChats   = sortedChats.filter(c => {
-      return getChatLastTime(c) >= archiveThreshold || c.id === state.activeChat;
+      const lastTime = c.messages.length ? c.messages[c.messages.length-1].time : (c.createdAt || 0);
+      return lastTime >= archiveThreshold || c.id === state.activeChat;
     });
     const archivedChats = sortedChats.filter(c => {
-      return getChatLastTime(c) < archiveThreshold && c.id !== state.activeChat;
+      const lastTime = c.messages.length ? c.messages[c.messages.length-1].time : (c.createdAt || 0);
+      return lastTime < archiveThreshold && c.id !== state.activeChat;
     });
 
     const renderChatItem = (chat) => {
@@ -1339,9 +1357,9 @@ async function sendMessage() {
     }
     await autoUpdateMemory(thisChatId);
     // 關係系統：評分 + 特別時刻偵測
-    // checkFragmentUnlock 已移入 scoreConversation 內，確保在分數更新後才執行
     scoreConversation(thisChatId, thisCharId).catch(()=>{});
     checkForSpecialMoments(thisChatId, thisCharId).catch(()=>{});
+    checkFragmentUnlock(thisCharId).catch(()=>{});
   } catch(err) {
     if (state.activeChat === thisChatId) hideTyping();
     addAIMessage(thisChatId, `（系統錯誤：${err.message}）`);
@@ -1435,6 +1453,9 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
   if (state.jailbreak && state.jailbreakPosition === 'system') {
     systemParts.push('\n' + state.jailbreak);
   }
+
+  // 語言強化：確保台灣繁中（置於最後，優先級最高）
+  systemParts.push('\n' + TW_LANG_INSTRUCTION);
 
   const systemInstruction = systemParts.join('');
 
@@ -1568,6 +1589,7 @@ async function callGeminiImage(prompt, refImages = []) {
     const rawB64   = match[2];
     parts.push({ inlineData: { mimeType, data: rawB64 } });
   }
+  console.log('[callGeminiImage] sending', parts.length - 0, 'ref parts (images) + 1 text part');
   parts.push({ text: prompt });
 
   const body = {
@@ -1718,6 +1740,8 @@ async function doTriggerImageGen() {
         'NOT photorealistic. NOT a photograph. Pure illustrated art only. No text, no watermarks, no logos.',
       ].filter(Boolean).join(' ');
     }
+    console.log('[ChatImageGen] refImages:', refImages.length, '| style:', _imageGenStyle, '| type:', _imageGenType);
+
     const imageUrl = await callGeminiImage(prompt, refImages);
     addAIMessage(state.activeChat, '📸 生成了一張圖片', 'image', imageUrl);
   } catch(err) {
@@ -1842,7 +1866,7 @@ ${recentMsgs || '（還沒有對話記錄）'}
 ${memories ? `
 你們之間重要的共同記憶：${memories}` : ''}
 
-現在請以第一人稱（「我」）用繁體中文，寫下你此刻真實的內心獨白。
+現在請以第一人稱（「我」）用台灣繁體中文，寫下你此刻真實的內心獨白。
 這是你不會說出口的心裡話——你真正的感受、顧慮、渴望、或是難以啟齒的想法。
 字數：80～150字。直接輸出獨白，不加任何標題或說明。`;
 
@@ -2559,11 +2583,11 @@ function editChar(charId) {
   document.getElementById('char-desc-input').value = char.desc || '';
   document.getElementById('char-first-msg-input').value = char.firstMsg || '';
   // persona select 會在 openModal 後設值，此處不設（避免時序問題）
-  // 填入作息設定（舊角色資料可能沒有 schedule 欄位，需安全取用）
+  // 填入作息設定
   const schedInput = document.getElementById('char-schedule-input');
   if (schedInput) schedInput.value = char.schedule?.desc || '';
   const schedToggle = document.getElementById('char-schedule-toggle');
-  if (schedToggle) schedToggle.classList.toggle('on', char.schedule?.enabled === true);
+  if (schedToggle) schedToggle.classList.toggle('on', !!char.schedule?.enabled);
   // 填入目前關係狀態
   const relSel = document.getElementById('char-rel-select');
   if (relSel) relSel.value = getRelData(char.id).level || 'stranger';
@@ -3036,7 +3060,7 @@ async function autoSilentSocialPost() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}` }] },
+        system_instruction: { parts: [{ text: `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}\n${TW_LANG_INSTRUCTION}` }] },
         contents: [{ role: 'user', parts: [{ text: `請以第一人稱在社群動態上發一篇自然的生活感貼文，根據你的個性自由發揮。${recentMsgs ? `\n\n[最近對話記錄，感受情緒但不要直接引用]\n${recentMsgs}` : ''}
 \n字數 150-300 字，語氣真實，只輸出正文。` }] }],
         generationConfig: { temperature: 1.0, maxOutputTokens: 2000 }
@@ -3096,7 +3120,7 @@ ${char.desc ? `[角色設定]\n${char.desc}` : ''}
 ${persona ? `\n[Persona - 你正在和 ${persona.name} 說話]\n${persona.desc || ''}` : ''}
 ${memTexts ? `\n[與對方的共同記憶]\n${memTexts}` : ''}`;
 
-    const userPrompt = `請以第一人稱，用繁體中文，在 ${platformName} 上發一篇貼文。
+    const userPrompt = `請以第一人稱，用台灣繁體中文，在 ${platformName} 上發一篇貼文。
 ${promptText ? `主題方向：${promptText}` : '根據你的個性與最近的生活自由發揮。'}
 
 ${recentMsgs ? `[最近的對話記錄供參考，融入情緒與感受但不要直接引用]\n${recentMsgs}\n` : ''}
@@ -3132,6 +3156,7 @@ ${recentMsgs ? `[最近的對話記錄供參考，融入情緒與感受但不要
           if (personaRef) refImages.push(personaRef);
         }
         const imgPrompt = buildSocialImagePrompt(imageOption, char, persona, content);
+        console.log('[Social Image] refImages count:', refImages.length, '| prompt:', imgPrompt.slice(0,120));
         imageUrl = await callGeminiImage(imgPrompt, refImages);
       } catch(e) {
         console.warn('Social image gen failed:', e.message, e);
@@ -3242,7 +3267,7 @@ async function allCharsReplyToPost(postId) {
       if (!p2) return;
       const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
 有人在社群平台發文：「${p2.content.slice(0,300)}」
-${persona ? `你在和 ${persona.name} 說話。` : ''}請用繁體中文寫一則自然留言（1-2句），語氣符合個性。只輸出留言內容。`;
+${persona ? `你在和 ${persona.name} 說話。` : ''}請用台灣繁體中文寫一則自然留言（1-2句），語氣符合個性，用詞台灣口語。只輸出留言內容。`;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('socialComment')}:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
@@ -3277,7 +3302,7 @@ async function aiReplyToComment(postId, userComment) {
       const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
 貼文：「${p2.content.slice(0,300)}」
 ${persona ? `你在和 ${persona.name} 說話。` : ''}有人留言：「${userComment}」
-請用繁體中文回應（1-2句），語氣符合個性。只輸出回覆內容。`;
+請用台灣繁體中文回應（1-2句），語氣符合個性，用詞台灣口語。只輸出回覆內容。`;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('socialComment')}:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
@@ -3551,7 +3576,7 @@ async function generateDiary(dateStr, styleOverride) {
         : '';
 
       const prompt = `你是 ${char.name}。${char.desc?.slice(0,300)||''}
-今天是 ${dateStr}。請以第一人稱用繁體中文寫一篇私密日記。
+今天是 ${dateStr}。請以第一人稱用台灣繁體中文寫一篇私密日記，語感自然、符合台灣日常用語習慣。
 
 篇幅要求：400～600字的完整日記，有情節有細節，不要虎頭蛇尾。
 
@@ -3963,9 +3988,6 @@ ${recentMsgs}
       saveRelData(charId);
       updateRelDisplay(charId);
 
-      // 分數更新後立即檢查碎片解鎖（在此呼叫才能拿到最新 score）
-      checkFragmentUnlock(charId).catch(() => {});
-
       // 積分夠了就嘗試升級評估
       await tryRelLevelUp(chatId, charId);
     }
@@ -4202,7 +4224,7 @@ async function triggerHolidayMessage(hint, holidayName) {
     const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
 ${persona ? `你正在和 ${persona.name} 說話。${persona.desc ? persona.desc.slice(0,100) : ''}` : ''}
 今天是【${holidayName}】。
-請以你的個性，用繁體中文，傳一則簡短自然的節日訊息給對方（1-3句，像 LINE 訊息的語感），可以帶一點撒嬌或情感，符合節日氛圍。只輸出訊息本身。`;
+請以你的個性，用台灣繁體中文，傳一則簡短自然的節日訊息給對方（1-3句，像 LINE 訊息的語感），用詞台灣口語，可以帶一點撒嬌或情感，符合節日氛圍。只輸出訊息本身。`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
@@ -4562,6 +4584,7 @@ async function generateFragment(charId, threshold) {
   const prompt = `你是 ${char.name}。${(char.desc||'').slice(0,200)}
 目前和用戶的關係：${relLv.label}（好感度 ${threshold} 分里程碑）。
 ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
+${TW_LANG_INSTRUCTION}
 
 請生成一個「${depthHint}」主題的私密碎片，類型為「${typeLabels[chosenType]}」。
 
@@ -4617,10 +4640,10 @@ async function retryPendingFragments() {
     const existing = (state.fragments[char.id] || []).map(f => f.scoreThreshold);
     const rel = getRelData(char.id);
     for (const threshold of FRAGMENT_THRESHOLDS) {
-      // 分數達標且碎片不存在就補生成（不論有無 pending 標記，解決 race condition 遺漏）
-      if (rel.score >= threshold && !existing.includes(threshold)) {
+      const pendingKey = `erh_frag_pending_${char.id}_${threshold}`;
+      if (localStorage.getItem(pendingKey) && rel.score >= threshold && !existing.includes(threshold)) {
         await generateFragment(char.id, threshold);
-        await delay(600);
+        await delay(500); // 避免同時發太多請求
       }
     }
   }
@@ -4758,12 +4781,49 @@ function showFragmentDetail(charId, fragId) {
         <div style="font-size:0.88rem;color:var(--text-dark);line-height:1.9;white-space:pre-wrap;font-style:italic;">${frag.content}</div>
       </div>
       <div style="font-size:0.65rem;color:var(--text-light);text-align:center;margin-bottom:1rem;">${new Date(frag.unlockedAt).toLocaleDateString('zh-TW',{year:'numeric',month:'long',day:'numeric'})} 解鎖</div>
-      <div class="modal-actions">
+      <div class="modal-actions" style="flex-direction:column;gap:0.5rem;">
+        <div style="display:flex;gap:0.5rem;width:100%;">
+          <button class="modal-btn secondary" style="flex:1;display:flex;align-items:center;justify-content:center;gap:0.3rem;"
+            onclick="regenFragment('${charId}','${frag.id}',${frag.scoreThreshold})">
+            🔄 重新生成
+          </button>
+          <button class="modal-btn secondary" style="flex:1;color:#e87878;border-color:rgba(232,120,120,0.3);display:flex;align-items:center;justify-content:center;gap:0.3rem;"
+            onclick="deleteFragment('${charId}','${frag.id}')">
+            🗑️ 刪除此碎片
+          </button>
+        </div>
         <button class="modal-btn primary" onclick="document.getElementById('fragment-detail-overlay').remove()">關閉</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+// 重新生成碎片（覆蓋舊內容）
+async function regenFragment(charId, fragId, threshold) {
+  const char = state.chars.find(c => c.id === charId);
+  if (!char) return;
+  if (!confirm(`確認重新生成這個碎片？目前內容將被覆蓋。`)) return;
+
+  document.getElementById('fragment-detail-overlay')?.remove();
+  showToast('🔮 重新生成碎片中…');
+
+  // 先把舊碎片從 state 移除（這樣 generateFragment 不會認為已解鎖）
+  state.fragments[charId] = (state.fragments[charId] || []).filter(f => f.id !== fragId);
+  await dbPut('fragments', { id: charId, data: state.fragments[charId] });
+
+  await generateFragment(charId, threshold);
+  renderFragmentGallery();
+}
+
+// 刪除碎片
+async function deleteFragment(charId, fragId) {
+  if (!confirm('確認刪除這個碎片？刪除後可前往成就頁重新觸發生成。')) return;
+  document.getElementById('fragment-detail-overlay')?.remove();
+  state.fragments[charId] = (state.fragments[charId] || []).filter(f => f.id !== fragId);
+  await dbPut('fragments', { id: charId, data: state.fragments[charId] });
+  renderFragmentGallery();
+  showToast('🗑️ 碎片已刪除');
 }
 
 // ─── 成就頁面 Moments 圖鑑渲染 ──────────────────────────
@@ -5444,18 +5504,17 @@ function uid() {
 
 // Universal avatar check
 function isImgSrc(av) { return av?.startsWith('http') || av?.startsWith('data:'); }
-
-// 統一 avatar HTML helper：isImgSrc 才用 <img>，否則直接輸出 emoji/文字
-function renderAv(av, fallback = '🌸', style = '') {
+function renderAv(av, fallback='🌸', style='') {
   return isImgSrc(av) ? `<img src="${av}" alt="" ${style}>` : (av || fallback);
 }
 
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// 取得 chat 的最後訊息時間（sidebar、mobile list、foyer 共用）
-function getChatLastTime(chat) {
-  return chat.messages.length ? chat.messages[chat.messages.length - 1].time : (chat.createdAt || 0);
+// Universal avatar HTML helper
+function avHtml(av, size='') {
+  const isImg = av?.startsWith('http') || av?.startsWith('data:');
+  return isImg ? `<img src="${av}" alt="" ${size}>` : (av || '🌸');
 }
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function formatTime(ts) {
   if (!ts) return '';
@@ -5496,6 +5555,7 @@ function autoResize(el) {
 }
 
 function handleInputKey(e) {
+  // Enter 鍵不再自動送出，請使用介面上的送出按鈕
   autoResize(e.target);
 }
 
@@ -5660,7 +5720,6 @@ async function deleteChatFromDrawer() {
   state.chats = state.chats.filter(c => c.id !== state.activeChat);
   await dbDelete('chats', state.activeChat);
   state.activeChat = null;
-  state.activeCharId = null; // 同步清除，避免殘留狀態影響後續操作
   document.getElementById('chat-header').style.display = 'none';
   document.getElementById('input-area').style.display = 'none';
   document.getElementById('messages-area').innerHTML = '<div class="empty-state" id="empty-chat"><div class="empty-state-icon">🌸</div><div class="empty-state-text">erhabene</div><div class="empty-state-sub">選擇一個角色開始對話</div></div>';
@@ -6157,6 +6216,7 @@ ${styleMap[style] || '自由發揮，符合角色個性即可。'}
 - 對話用「」標示
 - 自然分段，節奏流暢
 - 結尾要有餘韻，不要突然截斷
+- ${TW_LANG_INSTRUCTION}
 - 直接輸出故事內容，不加任何標題或說明`;
 
   try {

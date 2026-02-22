@@ -2137,6 +2137,7 @@ body {
           <button class="toolbar-btn" onclick="triggerDailyTopics()" title="今日話題">📰</button>
           <button class="toolbar-btn" onclick="triggerDailyReport()" title="每日早報">🗞️</button>
           <button class="toolbar-btn" id="holiday-btn" onclick="openHolidayModal()" title="節日劇情" style="position:relative;display:none;">🎉<span id="holiday-dot" style="position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:#e8787a;display:none;"></span></button>
+          <button class="toolbar-btn" onclick="switchPage('chars')" title="角色管理">🌸</button>
         </div>
         <!-- 今日話題欄 -->
         <div id="daily-topics-bar" class="daily-topics-bar" style="display:none;"></div>
@@ -2410,9 +2411,6 @@ body {
   </button>
   <button class="bottom-nav-btn" onclick="switchPage('chat')" id="bnav-chat">
     <span class="icon">💬</span><span>聊天</span>
-  </button>
-  <button class="bottom-nav-btn" onclick="switchPage('chars')" id="bnav-chars">
-    <span class="icon">🌸</span><span>角色</span>
   </button>
   <button class="bottom-nav-btn" onclick="switchPage('social')" id="bnav-social">
     <span class="icon">✦</span><span>社群</span>

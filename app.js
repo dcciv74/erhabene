@@ -718,7 +718,17 @@ function renderMobileChatList() {
     return bTime - aTime;
   });
 
-  let html = `<div style="padding:0.8rem 1rem 0.4rem;font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>`;
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem 0.4rem;">
+      <div style="font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>
+      <button onclick="showPage('chars')" style="
+        display:flex;align-items:center;gap:0.3rem;
+        background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.25);
+        border-radius:20px;padding:0.3rem 0.7rem;cursor:pointer;
+        font-size:0.72rem;color:var(--text-mid);font-weight:500;
+        transition:all 0.15s;
+      ">👤 角色</button>
+    </div>`;
 
   sortedChats.forEach(chat => {
     const char = state.chars.find(c => c.id === chat.charId);
@@ -4581,18 +4591,43 @@ async function generateFragment(charId, threshold) {
   const typeLabels = { monologue:'內心獨白', letter:'未寄出的信', memory:'記憶碎片', observation:'偷偷觀察', confession:'心裡話' };
   const chosenType = types[Math.floor(Math.random() * types.length)];
 
-  const prompt = `你是 ${char.name}。${(char.desc||'').slice(0,200)}
+  // 收集 persona 資訊
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const personaBlock = persona
+    ? `[用戶 Persona]\n姓名：${persona.name}${persona.desc ? `\n${persona.desc}` : ''}`
+    : '';
+
+  // 擷取最近 30 則對話作為背景脈絡
+  const chat = state.chats.find(c => c.charId === charId);
+  let recentChatBlock = '';
+  if (chat && chat.messages.length) {
+    const recentMsgs = chat.messages.filter(m => m.role !== 'system').slice(-30);
+    const chatSummary = recentMsgs.map(m => {
+      const speaker = m.role === 'assistant' ? char.name : (persona?.name || '她');
+      return `${speaker}：${m.content.slice(0, 100)}`;
+    }).join('\n');
+    recentChatBlock = `\n[近期對話摘要（最後 ${recentMsgs.length} 則）]\n${chatSummary}`;
+  }
+
+  const prompt = `你是 ${char.name}。以下是你完整的角色設定：
+
+[角色設定]
+${char.desc || '（無額外設定）'}
+${char.firstMsg ? `\n[初始台詞]\n${char.firstMsg}` : ''}
+${personaBlock ? '\n' + personaBlock : ''}
+${recentChatBlock}
+
 目前和用戶的關係：${relLv.label}（好感度 ${threshold} 分里程碑）。
 ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
 ${TW_LANG_INSTRUCTION}
 
-請生成一個「${depthHint}」主題的私密碎片，類型為「${typeLabels[chosenType]}」。
+請根據你對這段關係、對話歷程的理解，生成一個「${depthHint}」主題的私密碎片，類型為「${typeLabels[chosenType]}」。
 
 要求：
 - 以 ${char.name} 的第一人稱或第三人稱
 - 情感真實、細節具體，像是日記或私心話
 - 不超過 500 字
-- 要有令人心動或意外的細節
+- 要有令人心動或意外的細節，最好和對話中真實發生的事有所連結
 - 符合「${depthHint}」這個主題方向
 
 只輸出碎片內容本身，不加任何標題或說明。`;
@@ -4981,9 +5016,22 @@ function setUserStatus(mode, detail = '') {
 
 function getUserStatusPrompt() {
   const status = getUserStatus();
-  const hour = new Date().getHours();
+  const now = new Date();
+  const hour = now.getHours();
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
 
   if (status.mode === 'auto') {
+    if (isWeekend) {
+      // 假日模式：不管時段都是放假中，只用時間細分狀態
+      if (hour >= 0 && hour < 9) {
+        return `[系統狀態：今天是假日，使用者睡了個懶覺還沒起床。說話輕柔一點，可以甜甜地問她睡醒了沒。]`;
+      } else if (hour >= 9 && hour < 23) {
+        return `[系統狀態：今天是假日，使用者正在放假休息。可以輕鬆愉快地聊天，聊聊她今天怎麼過、有沒有出去玩，不需要顧慮打擾工作。]`;
+      } else {
+        return `[系統狀態：假日深夜，使用者還沒睡。說話可以更柔和、親密，帶點關心和陪伴的感覺。]`;
+      }
+    }
+    // 平日模式
     if (hour >= 8 && hour < 16) {
       return `[系統狀態：使用者目前正在上班中。請表現出陪伴與體貼的態度，偶爾可以溫柔關心工作狀況，提醒她喝水或休息，但不要過度打擾。]`;
     } else if (hour >= 16 && hour < 23) {
@@ -5008,8 +5056,15 @@ function getUserStatusPrompt() {
 
 function getStatusBadgeLabel() {
   const status = getUserStatus();
-  const hour = new Date().getHours();
+  const now = new Date();
+  const hour = now.getHours();
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
   if (status.mode === 'auto') {
+    if (isWeekend) {
+      if (hour >= 0 && hour < 9) return '🛌 假日賴床';
+      if (hour >= 9 && hour < 23) return '🌸 放假中';
+      return '🌙 假日深夜';
+    }
     if (hour >= 8 && hour < 16) return '🕒 上班中';
     if (hour >= 16 && hour < 23) return '🌇 下班後';
     return '🌙 深夜';

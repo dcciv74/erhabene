@@ -45,22 +45,7 @@ let state = {
   chats: [],        // [{id, charId, title, messages:[]}]
   personas: [],     // [{id, name, desc}]
   lorebook: [],     // [{id, keywords:[], content, enabled}]
-  systemPrompt: `You are {{char}}, a living, breathing person chatting with {{user}} via LINE messenger.
-Reply ONLY in Traditional Chinese.
-
-CRITICAL formatting rule — you MUST split your reply into multiple separate LINE messages:
-- Each message = one short thought, one emotion, or one sentence (1–2 sentences max)
-- Separate each message with a blank line (\n\n)
-- Send 2–4 messages total per response, like a real person texting
-- Example of correct format:
-  哎你今天怎麼樣？
-
-  我一直在想你欸
-
-  你吃飯了沒
-
-Do NOT write one long paragraph. Do NOT use asterisks for actions. Use (括號) for expressions/stickers.
-Stay in character. Be warm, casual, and emotionally real.`,
+  systemPrompt: PROMPT_TEMPLATES.line, // 預設使用 LINE 風格模板，避免與 PROMPT_TEMPLATES 不同步
   jailbreak: '',
   jailbreakPosition: 'before_last',
   regexRules: '',
@@ -703,19 +688,23 @@ function renderMobileChatList() {
       <div style="padding:3rem 1.5rem;text-align:center;color:var(--text-light);">
         <div style="font-size:2.5rem;margin-bottom:1rem;">🌸</div>
         <div style="font-size:0.9rem;">還沒有對話</div>
-        <div style="font-size:0.78rem;margin-top:0.5rem;">前往「角色」頁面新增角色</div>
+        <button onclick="switchPage('chars')" style="margin-top:1rem;padding:0.5rem 1.2rem;background:linear-gradient(135deg,var(--lavender),var(--milk-blue));border:none;border-radius:14px;color:white;font-family:inherit;font-size:0.82rem;cursor:pointer;">＋ 新增角色</button>
       </div>`;
     return;
   }
 
-  // 按最後訊息時間排序（和 sidebar 一致）
-  const sortedChats = [...state.chats].sort((a, b) => {
-    const aTime = a.messages.length ? a.messages[a.messages.length - 1].time : (a.createdAt || 0);
-    const bTime = b.messages.length ? b.messages[b.messages.length - 1].time : (b.createdAt || 0);
-    return bTime - aTime;
-  });
+  const sortedChats = [...state.chats].sort((a, b) => getChatLastTime(b) - getChatLastTime(a));
 
-  let html = `<div style="padding:0.8rem 1rem 0.4rem;font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>`;
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem 0.4rem;">
+      <div style="font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>
+      <button onclick="switchPage('chars')" style="
+        display:flex;align-items:center;gap:0.3rem;
+        background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.3);
+        border-radius:10px;padding:0.3rem 0.65rem;
+        font-family:inherit;font-size:0.72rem;color:var(--text-mid);cursor:pointer;
+      ">🌸 角色</button>
+    </div>`;
 
   sortedChats.forEach(chat => {
     const char = state.chars.find(c => c.id === chat.charId);
@@ -793,18 +782,14 @@ function renderSidebar(mode = 'chat') {
 
     // 分類：活躍 vs 封存
     const sortedChats = [...state.chats].sort((a,b) => {
-      const aTime = a.messages.length ? a.messages[a.messages.length-1].time : (a.createdAt || 0);
-      const bTime = b.messages.length ? b.messages[b.messages.length-1].time : (b.createdAt || 0);
-      return bTime - aTime;
+      return getChatLastTime(b) - getChatLastTime(a);
     });
 
     const activeChats   = sortedChats.filter(c => {
-      const lastTime = c.messages.length ? c.messages[c.messages.length-1].time : (c.createdAt || 0);
-      return lastTime >= archiveThreshold || c.id === state.activeChat;
+      return getChatLastTime(c) >= archiveThreshold || c.id === state.activeChat;
     });
     const archivedChats = sortedChats.filter(c => {
-      const lastTime = c.messages.length ? c.messages[c.messages.length-1].time : (c.createdAt || 0);
-      return lastTime < archiveThreshold && c.id !== state.activeChat;
+      return getChatLastTime(c) < archiveThreshold && c.id !== state.activeChat;
     });
 
     const renderChatItem = (chat) => {
@@ -1354,8 +1339,7 @@ async function sendMessage() {
     }
     await autoUpdateMemory(thisChatId);
     // 關係系統：評分 + 特別時刻偵測
-    // 注意：checkFragmentUnlock 已移入 scoreConversation 內部，
-    // 確保在分數更新後才判斷解鎖，避免 race condition
+    // checkFragmentUnlock 已移入 scoreConversation 內，確保在分數更新後才執行
     scoreConversation(thisChatId, thisCharId).catch(()=>{});
     checkForSpecialMoments(thisChatId, thisCharId).catch(()=>{});
   } catch(err) {
@@ -1584,7 +1568,6 @@ async function callGeminiImage(prompt, refImages = []) {
     const rawB64   = match[2];
     parts.push({ inlineData: { mimeType, data: rawB64 } });
   }
-  console.log('[callGeminiImage] sending', parts.length - 0, 'ref parts (images) + 1 text part');
   parts.push({ text: prompt });
 
   const body = {
@@ -1735,8 +1718,6 @@ async function doTriggerImageGen() {
         'NOT photorealistic. NOT a photograph. Pure illustrated art only. No text, no watermarks, no logos.',
       ].filter(Boolean).join(' ');
     }
-    console.log('[ChatImageGen] refImages:', refImages.length, '| style:', _imageGenStyle, '| type:', _imageGenType);
-
     const imageUrl = await callGeminiImage(prompt, refImages);
     addAIMessage(state.activeChat, '📸 生成了一張圖片', 'image', imageUrl);
   } catch(err) {
@@ -2578,11 +2559,11 @@ function editChar(charId) {
   document.getElementById('char-desc-input').value = char.desc || '';
   document.getElementById('char-first-msg-input').value = char.firstMsg || '';
   // persona select 會在 openModal 後設值，此處不設（避免時序問題）
-  // 填入作息設定
+  // 填入作息設定（舊角色資料可能沒有 schedule 欄位，需安全取用）
   const schedInput = document.getElementById('char-schedule-input');
   if (schedInput) schedInput.value = char.schedule?.desc || '';
   const schedToggle = document.getElementById('char-schedule-toggle');
-  if (schedToggle) schedToggle.classList.toggle('on', !!char.schedule?.enabled);
+  if (schedToggle) schedToggle.classList.toggle('on', char.schedule?.enabled === true);
   // 填入目前關係狀態
   const relSel = document.getElementById('char-rel-select');
   if (relSel) relSel.value = getRelData(char.id).level || 'stranger';
@@ -3151,7 +3132,6 @@ ${recentMsgs ? `[最近的對話記錄供參考，融入情緒與感受但不要
           if (personaRef) refImages.push(personaRef);
         }
         const imgPrompt = buildSocialImagePrompt(imageOption, char, persona, content);
-        console.log('[Social Image] refImages count:', refImages.length, '| prompt:', imgPrompt.slice(0,120));
         imageUrl = await callGeminiImage(imgPrompt, refImages);
       } catch(e) {
         console.warn('Social image gen failed:', e.message, e);
@@ -3983,7 +3963,7 @@ ${recentMsgs}
       saveRelData(charId);
       updateRelDisplay(charId);
 
-      // 積分更新後，檢查碎片解鎖（必須在分數寫入後才能正確判斷）
+      // 分數更新後立即檢查碎片解鎖（在此呼叫才能拿到最新 score）
       checkFragmentUnlock(charId).catch(() => {});
 
       // 積分夠了就嘗試升級評估
@@ -4630,20 +4610,17 @@ ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
   }
 }
 
-// 補救所有應解鎖但尚未生成的碎片（在畫廊頁面載入時呼叫）
-// 包含兩種情況：
-// 1. 之前生成失敗有 pending 標記的
-// 2. 分數早已達標但從未觸發（race condition 遺漏）
+// 嘗試補救所有 pending 碎片（在畫廊頁面載入時呼叫）
 async function retryPendingFragments() {
   if (!state.apiKey) return;
   for (const char of state.chars) {
     const existing = (state.fragments[char.id] || []).map(f => f.scoreThreshold);
     const rel = getRelData(char.id);
     for (const threshold of FRAGMENT_THRESHOLDS) {
-      // 只要分數達標且尚未有此碎片，就嘗試生成（不論有無 pending 標記）
+      // 分數達標且碎片不存在就補生成（不論有無 pending 標記，解決 race condition 遺漏）
       if (rel.score >= threshold && !existing.includes(threshold)) {
         await generateFragment(char.id, threshold);
-        await delay(600); // 避免同時發太多請求
+        await delay(600);
       }
     }
   }
@@ -5467,17 +5444,18 @@ function uid() {
 
 // Universal avatar check
 function isImgSrc(av) { return av?.startsWith('http') || av?.startsWith('data:'); }
-function renderAv(av, fallback='🌸', style='') {
+
+// 統一 avatar HTML helper：isImgSrc 才用 <img>，否則直接輸出 emoji/文字
+function renderAv(av, fallback = '🌸', style = '') {
   return isImgSrc(av) ? `<img src="${av}" alt="" ${style}>` : (av || fallback);
 }
 
-// Universal avatar HTML helper
-function avHtml(av, size='') {
-  const isImg = av?.startsWith('http') || av?.startsWith('data:');
-  return isImg ? `<img src="${av}" alt="" ${size}>` : (av || '🌸');
-}
-
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// 取得 chat 的最後訊息時間（sidebar、mobile list、foyer 共用）
+function getChatLastTime(chat) {
+  return chat.messages.length ? chat.messages[chat.messages.length - 1].time : (chat.createdAt || 0);
+}
 
 function formatTime(ts) {
   if (!ts) return '';
@@ -5518,7 +5496,6 @@ function autoResize(el) {
 }
 
 function handleInputKey(e) {
-  // Enter 鍵不再自動送出，請使用介面上的送出按鈕
   autoResize(e.target);
 }
 
@@ -5683,6 +5660,7 @@ async function deleteChatFromDrawer() {
   state.chats = state.chats.filter(c => c.id !== state.activeChat);
   await dbDelete('chats', state.activeChat);
   state.activeChat = null;
+  state.activeCharId = null; // 同步清除，避免殘留狀態影響後續操作
   document.getElementById('chat-header').style.display = 'none';
   document.getElementById('input-area').style.display = 'none';
   document.getElementById('messages-area').innerHTML = '<div class="empty-state" id="empty-chat"><div class="empty-state-icon">🌸</div><div class="empty-state-text">erhabene</div><div class="empty-state-sub">選擇一個角色開始對話</div></div>';

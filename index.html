@@ -2099,6 +2099,13 @@ body {
           </div>
         </div>
         <div class="header-actions">
+          <button onclick="switchPage('chars')" title="角色管理" style="
+            display:flex;align-items:center;gap:0.3rem;
+            background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.35);
+            border-radius:12px;padding:0.28rem 0.7rem;
+            font-family:inherit;font-size:0.72rem;color:var(--text-mid);cursor:pointer;
+            white-space:nowrap;flex-shrink:0;
+          ">🌸 角色</button>
           <button class="header-btn" onclick="openChatOptions()" title="更多">⋯</button>
         </div>
       </div>
@@ -2137,7 +2144,6 @@ body {
           <button class="toolbar-btn" onclick="triggerDailyTopics()" title="今日話題">📰</button>
           <button class="toolbar-btn" onclick="triggerDailyReport()" title="每日早報">🗞️</button>
           <button class="toolbar-btn" id="holiday-btn" onclick="openHolidayModal()" title="節日劇情" style="position:relative;display:none;">🎉<span id="holiday-dot" style="position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:#e8787a;display:none;"></span></button>
-          <button class="toolbar-btn" onclick="switchPage('chars')" title="角色管理">🌸</button>
         </div>
         <!-- 今日話題欄 -->
         <div id="daily-topics-bar" class="daily-topics-bar" style="display:none;"></div>

@@ -1,10 +1,7 @@
-// ── 台灣繁中語言指令（所有 prompt 共用） ───────────────
-const TW_LANG_INSTRUCTION = `語言要求：請使用台灣繁體中文回覆，語感自然口語，符合台灣日常用語習慣。\n禁止使用中國大陸用語（如：視頻→影片、軟件→軟體、點擊→點選、鏈接→連結、獲取→取得、打卡除外）。`;
-
 // ── 對話風格模板 ─────────────────────────────────────
 const PROMPT_TEMPLATES = {
   line: `You are {{char}}, a living, breathing person chatting with {{user}} via LINE messenger.
-請使用台灣繁體中文回覆，語感自然口語，符合台灣日常用語習慣。禁止使用中國大陸用語（如：視頻→影片、軟件→軟體、點擊→點選、鏈接→連結）。
+Reply ONLY in Traditional Chinese.
 
 CRITICAL formatting rule — you MUST split your reply into multiple separate LINE messages:
 - Each message = one short thought, one emotion, or one sentence (1–2 sentences max)
@@ -15,7 +12,7 @@ Do NOT write one long paragraph. Do NOT use asterisks for actions. Use (括號) 
 Stay in character. Be warm, casual, and emotionally real.`,
 
   prose: `You are {{char}}, talking with {{user}} in real life or a narrative setting.
-請使用台灣繁體中文回覆，語感自然口語，符合台灣日常用語習慣。禁止使用中國大陸用語（如：視頻→影片、軟件→軟體、點擊→點選、鏈接→連結）。
+Reply ONLY in Traditional Chinese.
 
 Response style:
 - Write one rich, natural response (3–7 sentences)
@@ -49,7 +46,7 @@ let state = {
   personas: [],     // [{id, name, desc}]
   lorebook: [],     // [{id, keywords:[], content, enabled}]
   systemPrompt: `You are {{char}}, a living, breathing person chatting with {{user}} via LINE messenger.
-請使用台灣繁體中文回覆，語感自然口語，符合台灣日常用語習慣。禁止使用中國大陸用語（如：視頻→影片、軟件→軟體、點擊→點選、鏈接→連結）。
+Reply ONLY in Traditional Chinese.
 
 CRITICAL formatting rule — you MUST split your reply into multiple separate LINE messages:
 - Each message = one short thought, one emotion, or one sentence (1–2 sentences max)
@@ -718,7 +715,16 @@ function renderMobileChatList() {
     return bTime - aTime;
   });
 
-  let html = `<div style="padding:0.8rem 1rem 0.4rem;font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>`;
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem 0.4rem;">
+      <div style="font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>
+      <button onclick="switchPage('chars')" style="
+        display:flex;align-items:center;gap:0.3rem;
+        background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.3);
+        border-radius:10px;padding:0.28rem 0.65rem;
+        font-family:inherit;font-size:0.72rem;color:var(--text-mid);cursor:pointer;
+      ">🌸 角色</button>
+    </div>`;
 
   sortedChats.forEach(chat => {
     const char = state.chars.find(c => c.id === chat.charId);
@@ -1454,9 +1460,6 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
     systemParts.push('\n' + state.jailbreak);
   }
 
-  // 語言強化：確保台灣繁中（置於最後，優先級最高）
-  systemParts.push('\n' + TW_LANG_INSTRUCTION);
-
   const systemInstruction = systemParts.join('');
 
   // Build conversation history (last 30 messages)
@@ -1866,7 +1869,7 @@ ${recentMsgs || '（還沒有對話記錄）'}
 ${memories ? `
 你們之間重要的共同記憶：${memories}` : ''}
 
-現在請以第一人稱（「我」）用台灣繁體中文，寫下你此刻真實的內心獨白。
+現在請以第一人稱（「我」）用繁體中文，寫下你此刻真實的內心獨白。
 這是你不會說出口的心裡話——你真正的感受、顧慮、渴望、或是難以啟齒的想法。
 字數：80～150字。直接輸出獨白，不加任何標題或說明。`;
 
@@ -3060,7 +3063,7 @@ async function autoSilentSocialPost() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}\n${TW_LANG_INSTRUCTION}` }] },
+        system_instruction: { parts: [{ text: `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}` }] },
         contents: [{ role: 'user', parts: [{ text: `請以第一人稱在社群動態上發一篇自然的生活感貼文，根據你的個性自由發揮。${recentMsgs ? `\n\n[最近對話記錄，感受情緒但不要直接引用]\n${recentMsgs}` : ''}
 \n字數 150-300 字，語氣真實，只輸出正文。` }] }],
         generationConfig: { temperature: 1.0, maxOutputTokens: 2000 }
@@ -3120,7 +3123,7 @@ ${char.desc ? `[角色設定]\n${char.desc}` : ''}
 ${persona ? `\n[Persona - 你正在和 ${persona.name} 說話]\n${persona.desc || ''}` : ''}
 ${memTexts ? `\n[與對方的共同記憶]\n${memTexts}` : ''}`;
 
-    const userPrompt = `請以第一人稱，用台灣繁體中文，在 ${platformName} 上發一篇貼文。
+    const userPrompt = `請以第一人稱，用繁體中文，在 ${platformName} 上發一篇貼文。
 ${promptText ? `主題方向：${promptText}` : '根據你的個性與最近的生活自由發揮。'}
 
 ${recentMsgs ? `[最近的對話記錄供參考，融入情緒與感受但不要直接引用]\n${recentMsgs}\n` : ''}
@@ -3267,7 +3270,7 @@ async function allCharsReplyToPost(postId) {
       if (!p2) return;
       const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
 有人在社群平台發文：「${p2.content.slice(0,300)}」
-${persona ? `你在和 ${persona.name} 說話。` : ''}請用台灣繁體中文寫一則自然留言（1-2句），語氣符合個性，用詞台灣口語。只輸出留言內容。`;
+${persona ? `你在和 ${persona.name} 說話。` : ''}請用繁體中文寫一則自然留言（1-2句），語氣符合個性。只輸出留言內容。`;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('socialComment')}:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
@@ -3302,7 +3305,7 @@ async function aiReplyToComment(postId, userComment) {
       const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
 貼文：「${p2.content.slice(0,300)}」
 ${persona ? `你在和 ${persona.name} 說話。` : ''}有人留言：「${userComment}」
-請用台灣繁體中文回應（1-2句），語氣符合個性，用詞台灣口語。只輸出回覆內容。`;
+請用繁體中文回應（1-2句），語氣符合個性。只輸出回覆內容。`;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('socialComment')}:generateContent?key=${state.apiKey}`;
       const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{maxOutputTokens:3000} })
@@ -3576,7 +3579,7 @@ async function generateDiary(dateStr, styleOverride) {
         : '';
 
       const prompt = `你是 ${char.name}。${char.desc?.slice(0,300)||''}
-今天是 ${dateStr}。請以第一人稱用台灣繁體中文寫一篇私密日記，語感自然、符合台灣日常用語習慣。
+今天是 ${dateStr}。請以第一人稱用繁體中文寫一篇私密日記。
 
 篇幅要求：400～600字的完整日記，有情節有細節，不要虎頭蛇尾。
 
@@ -4224,7 +4227,7 @@ async function triggerHolidayMessage(hint, holidayName) {
     const prompt = `你是 ${char.name}。${char.desc ? char.desc.slice(0,200) : ''}
 ${persona ? `你正在和 ${persona.name} 說話。${persona.desc ? persona.desc.slice(0,100) : ''}` : ''}
 今天是【${holidayName}】。
-請以你的個性，用台灣繁體中文，傳一則簡短自然的節日訊息給對方（1-3句，像 LINE 訊息的語感），用詞台灣口語，可以帶一點撒嬌或情感，符合節日氛圍。只輸出訊息本身。`;
+請以你的個性，用繁體中文，傳一則簡短自然的節日訊息給對方（1-3句，像 LINE 訊息的語感），可以帶一點撒嬌或情感，符合節日氛圍。只輸出訊息本身。`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
     const res = await fetch(url, {
@@ -4577,25 +4580,62 @@ async function generateFragment(charId, threshold) {
   const existing = (state.fragments[charId] || []).map(f => f.theme).join('、');
   const relLv = getRelLevel(charId);
 
+  // ── 收集豐富的上下文 ──
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const charChats = state.chats.filter(c => c.charId === charId);
+  const allMsgs = charChats.flatMap(c => c.messages);
+  // 取最近 30 則有實質內容的對話
+  const recentMsgs = allMsgs
+    .filter(m => m.type === 'text' && m.content && m.content.length > 2)
+    .slice(-30)
+    .map(m => `${m.role === 'user' ? (persona?.name || '我') : char.name}：${m.content}`)
+    .join('\n');
+  // 記憶摘要
+  const memories = charChats
+    .flatMap(c => state.memory[c.id] || [])
+    .map(m => `[${m.category}] ${m.text}`)
+    .join('\n');
+  // 紀念日
+  const anniversaries = state.anniversaries
+    .filter(a => a.charId === charId)
+    .map(a => {
+      const label = {confession:'告白',dating:'交往',wedding:'結婚',firstmeet:'初次相遇',custom:a.customName}[a.type] || a.type;
+      return `${label}：${a.date}`;
+    }).join('、');
+
   const types = ['monologue','letter','memory','observation','confession'];
   const typeLabels = { monologue:'內心獨白', letter:'未寄出的信', memory:'記憶碎片', observation:'偷偷觀察', confession:'心裡話' };
   const chosenType = types[Math.floor(Math.random() * types.length)];
 
-  const prompt = `你是 ${char.name}。${(char.desc||'').slice(0,200)}
-目前和用戶的關係：${relLv.label}（好感度 ${threshold} 分里程碑）。
-${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
-${TW_LANG_INSTRUCTION}
+  const prompt = `${TW_LANG_INSTRUCTION}
 
-請生成一個「${depthHint}」主題的私密碎片，類型為「${typeLabels[chosenType]}」。
+你是 ${char.name}，以下是你的完整角色設定：
+${char.desc || '（無特別設定）'}
 
-要求：
-- 以 ${char.name} 的第一人稱或第三人稱
-- 情感真實、細節具體，像是日記或私心話
-- 不超過 500 字
-- 要有令人心動或意外的細節
-- 符合「${depthHint}」這個主題方向
+${persona ? `[你正在和 ${persona.name} 交往/互動]\n${persona.name} 的描述：${persona.desc || ''}` : ''}
 
-只輸出碎片內容本身，不加任何標題或說明。`;
+[目前感情狀態]
+與對方的關係階段：${relLv.label}（好感度已達 ${threshold} 分里程碑）
+${anniversaries ? `感情里程碑：${anniversaries}` : ''}
+
+${memories ? `[兩人之間重要的共同記憶]\n${memories}` : ''}
+
+${recentMsgs ? `[最近的對話記錄（作為情感背景參考）]\n${recentMsgs}` : ''}
+
+${existing ? `[已揭露過的碎片主題，請勿重複]\n${existing}` : ''}
+
+---
+現在請以 ${char.name} 的身份，生成一個「${depthHint}」主題的私密碎片，類型為「${typeLabels[chosenType]}」。
+
+寫作要求：
+- 以 ${char.name} 的第一人稱視角
+- 情感真實、細節具體，像是日記、內心獨白或私心話
+- 250～450 字，有完整情感弧線，不虎頭蛇尾
+- 引用對話中的具體細節，讓內容有真實感
+- 符合「${depthHint}」的主題深度
+- 語氣符合角色個性
+
+只輸出碎片內容本身，不加任何標題、說明或引號。`;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
@@ -4781,49 +4821,12 @@ function showFragmentDetail(charId, fragId) {
         <div style="font-size:0.88rem;color:var(--text-dark);line-height:1.9;white-space:pre-wrap;font-style:italic;">${frag.content}</div>
       </div>
       <div style="font-size:0.65rem;color:var(--text-light);text-align:center;margin-bottom:1rem;">${new Date(frag.unlockedAt).toLocaleDateString('zh-TW',{year:'numeric',month:'long',day:'numeric'})} 解鎖</div>
-      <div class="modal-actions" style="flex-direction:column;gap:0.5rem;">
-        <div style="display:flex;gap:0.5rem;width:100%;">
-          <button class="modal-btn secondary" style="flex:1;display:flex;align-items:center;justify-content:center;gap:0.3rem;"
-            onclick="regenFragment('${charId}','${frag.id}',${frag.scoreThreshold})">
-            🔄 重新生成
-          </button>
-          <button class="modal-btn secondary" style="flex:1;color:#e87878;border-color:rgba(232,120,120,0.3);display:flex;align-items:center;justify-content:center;gap:0.3rem;"
-            onclick="deleteFragment('${charId}','${frag.id}')">
-            🗑️ 刪除此碎片
-          </button>
-        </div>
+      <div class="modal-actions">
         <button class="modal-btn primary" onclick="document.getElementById('fragment-detail-overlay').remove()">關閉</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-}
-
-// 重新生成碎片（覆蓋舊內容）
-async function regenFragment(charId, fragId, threshold) {
-  const char = state.chars.find(c => c.id === charId);
-  if (!char) return;
-  if (!confirm(`確認重新生成這個碎片？目前內容將被覆蓋。`)) return;
-
-  document.getElementById('fragment-detail-overlay')?.remove();
-  showToast('🔮 重新生成碎片中…');
-
-  // 先把舊碎片從 state 移除（這樣 generateFragment 不會認為已解鎖）
-  state.fragments[charId] = (state.fragments[charId] || []).filter(f => f.id !== fragId);
-  await dbPut('fragments', { id: charId, data: state.fragments[charId] });
-
-  await generateFragment(charId, threshold);
-  renderFragmentGallery();
-}
-
-// 刪除碎片
-async function deleteFragment(charId, fragId) {
-  if (!confirm('確認刪除這個碎片？刪除後可前往成就頁重新觸發生成。')) return;
-  document.getElementById('fragment-detail-overlay')?.remove();
-  state.fragments[charId] = (state.fragments[charId] || []).filter(f => f.id !== fragId);
-  await dbPut('fragments', { id: charId, data: state.fragments[charId] });
-  renderFragmentGallery();
-  showToast('🗑️ 碎片已刪除');
 }
 
 // ─── 成就頁面 Moments 圖鑑渲染 ──────────────────────────
@@ -4981,12 +4984,20 @@ function setUserStatus(mode, detail = '') {
 
 function getUserStatusPrompt() {
   const status = getUserStatus();
-  const hour = new Date().getHours();
+  const now = new Date();
+  const hour = now.getHours();
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
 
   if (status.mode === 'auto') {
-    if (hour >= 8 && hour < 16) {
+    if (isWeekend) {
+      if (hour >= 23 || hour < 6) {
+        return `[系統狀態：今天是假日，使用者深夜還沒睡。說話可以更柔和、親密，帶點陪伴感，也可以自然提到夜深了。]`;
+      }
+      return `[系統狀態：今天是假日，使用者正在放假休息。可以輕鬆聊天、關心她今天有沒有好好放鬆，不需要提工作相關話題。]`;
+    }
+    if (hour >= 8 && hour < 17) {
       return `[系統狀態：使用者目前正在上班中。請表現出陪伴與體貼的態度，偶爾可以溫柔關心工作狀況，提醒她喝水或休息，但不要過度打擾。]`;
-    } else if (hour >= 16 && hour < 23) {
+    } else if (hour >= 17 && hour < 23) {
       return `[系統狀態：使用者剛下班或正在放鬆中。可以更輕鬆活潑地聊天，關心今天過得怎樣，不需要顧慮打擾工作。]`;
     } else {
       return `[系統狀態：深夜時分，使用者還沒睡。說話可以更柔和、親密，帶點關心和陪伴的感覺，也可以自然提到夜深了。]`;
@@ -5008,10 +5019,13 @@ function getUserStatusPrompt() {
 
 function getStatusBadgeLabel() {
   const status = getUserStatus();
-  const hour = new Date().getHours();
+  const now = new Date();
+  const hour = now.getHours();
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
   if (status.mode === 'auto') {
-    if (hour >= 8 && hour < 16) return '🕒 上班中';
-    if (hour >= 16 && hour < 23) return '🌇 下班後';
+    if (isWeekend) return '🌿 假日';
+    if (hour >= 8 && hour < 17) return '🕒 上班中';
+    if (hour >= 17 && hour < 23) return '🌇 下班後';
     return '🌙 深夜';
   }
   const labels = { travel:'🧳 出差中', wfh:'🏠 在家上班', sick:'🤒 休息中', custom:'✏️ 自訂' };
@@ -6216,7 +6230,6 @@ ${styleMap[style] || '自由發揮，符合角色個性即可。'}
 - 對話用「」標示
 - 自然分段，節奏流暢
 - 結尾要有餘韻，不要突然截斷
-- ${TW_LANG_INSTRUCTION}
 - 直接輸出故事內容，不加任何標題或說明`;
 
   try {

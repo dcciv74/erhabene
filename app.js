@@ -405,79 +405,7 @@ function enterApp() {
 }
 
 // ─── 玄關 FOYER ──────────────────────────────────────
-// 背景圖依時段自動切換（Unsplash 固定 collection，無需 API key）
-const FOYER_BACKGROUNDS = {
-  // 深夜 00-05
-  night: [
-    'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&q=80', // 星空山脈
-    'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=1200&q=80', // 夜湖倒影
-    'https://images.unsplash.com/photo-1532978379173-523e16f371f4?w=1200&q=80', // 城市夜景
-  ],
-  // 清晨 05-09
-  dawn: [
-    'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?w=1200&q=80', // 晨霧森林
-    'https://images.unsplash.com/photo-1504701954957-2010ec3bcec1?w=1200&q=80', // 日出海岸
-    'https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1200&q=80', // 晨光草原
-  ],
-  // 上午 09-13
-  morning: [
-    'https://images.unsplash.com/photo-1490750967868-88df5691cc2d?w=1200&q=80', // 盛開花田
-    'https://images.unsplash.com/photo-1534430480872-3498386e7856?w=1200&q=80', // 春日咖啡館
-    'https://images.unsplash.com/photo-1519710164239-da123dc03ef4?w=1200&q=80', // 陽光林間
-  ],
-  // 下午 13-17
-  afternoon: [
-    'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200&q=80', // 雲海山頂
-    'https://images.unsplash.com/photo-1473448912268-2022ce9509d8?w=1200&q=80', // 秋日楓葉
-    'https://images.unsplash.com/photo-1455218873509-8097305ee378?w=1200&q=80', // 午後雨窗
-  ],
-  // 傍晚 17-21
-  evening: [
-    'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=1200&q=80', // 夕陽海面
-    'https://images.unsplash.com/photo-1536514498073-50e69d39c6cf?w=1200&q=80', // 黃昏街燈
-    'https://images.unsplash.com/photo-1500049242364-5f500807cdd7?w=1200&q=80', // 落日餘暉
-  ],
-  // 晚間 21-00
-  late_evening: [
-    'https://images.unsplash.com/photo-1531306728370-e2ebd9d7bb99?w=1200&q=80', // 夜幕星空
-    'https://images.unsplash.com/photo-1488866022504-f2584929ca5f?w=1200&q=80', // 夜雨城市
-    'https://images.unsplash.com/photo-1444703686981-a3abbc4d4fe3?w=1200&q=80', // 夜間公園
-  ],
-};
-
-function getFoyerTimePeriod() {
-  const h = new Date().getHours();
-  if (h >= 0 && h < 5) return 'night';
-  if (h >= 5 && h < 9) return 'dawn';
-  if (h >= 9 && h < 13) return 'morning';
-  if (h >= 13 && h < 17) return 'afternoon';
-  if (h >= 17 && h < 21) return 'evening';
-  return 'late_evening';
-}
-
-function updateFoyerBackground() {
-  const el = document.getElementById('foyer-bg');
-  if (!el) return;
-  const period = getFoyerTimePeriod();
-  const pool = FOYER_BACKGROUNDS[period];
-  // 每天固定一張（依日期選 index，避免每次刷新都變）
-  const today = new Date();
-  const dayOfYear = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 86400000);
-  const idx = dayOfYear % pool.length;
-  const url = pool[idx];
-  if (el.dataset.currentBg !== url) {
-    el.style.opacity = '0';
-    setTimeout(() => {
-      el.style.backgroundImage = `url('${url}')`;
-      el.dataset.currentBg = url;
-      el.style.opacity = '0.35';
-    }, 400);
-  }
-}
-
 function renderFoyerPage() {
-  // 背景圖
-  updateFoyerBackground();
   // 時鐘
   updateFoyerClock();
   if (!window._foyerClockInterval) {
@@ -1426,9 +1354,10 @@ async function sendMessage() {
     }
     await autoUpdateMemory(thisChatId);
     // 關係系統：評分 + 特別時刻偵測
+    // 注意：checkFragmentUnlock 已移入 scoreConversation 內部，
+    // 確保在分數更新後才判斷解鎖，避免 race condition
     scoreConversation(thisChatId, thisCharId).catch(()=>{});
     checkForSpecialMoments(thisChatId, thisCharId).catch(()=>{});
-    checkFragmentUnlock(thisCharId).catch(()=>{});
   } catch(err) {
     if (state.activeChat === thisChatId) hideTyping();
     addAIMessage(thisChatId, `（系統錯誤：${err.message}）`);
@@ -4054,6 +3983,9 @@ ${recentMsgs}
       saveRelData(charId);
       updateRelDisplay(charId);
 
+      // 積分更新後，檢查碎片解鎖（必須在分數寫入後才能正確判斷）
+      checkFragmentUnlock(charId).catch(() => {});
+
       // 積分夠了就嘗試升級評估
       await tryRelLevelUp(chatId, charId);
     }
@@ -4698,17 +4630,20 @@ ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
   }
 }
 
-// 嘗試補救所有 pending 碎片（在畫廊頁面載入時呼叫）
+// 補救所有應解鎖但尚未生成的碎片（在畫廊頁面載入時呼叫）
+// 包含兩種情況：
+// 1. 之前生成失敗有 pending 標記的
+// 2. 分數早已達標但從未觸發（race condition 遺漏）
 async function retryPendingFragments() {
   if (!state.apiKey) return;
   for (const char of state.chars) {
     const existing = (state.fragments[char.id] || []).map(f => f.scoreThreshold);
     const rel = getRelData(char.id);
     for (const threshold of FRAGMENT_THRESHOLDS) {
-      const pendingKey = `erh_frag_pending_${char.id}_${threshold}`;
-      if (localStorage.getItem(pendingKey) && rel.score >= threshold && !existing.includes(threshold)) {
+      // 只要分數達標且尚未有此碎片，就嘗試生成（不論有無 pending 標記）
+      if (rel.score >= threshold && !existing.includes(threshold)) {
         await generateFragment(char.id, threshold);
-        await delay(500); // 避免同時發太多請求
+        await delay(600); // 避免同時發太多請求
       }
     }
   }
@@ -5009,20 +4944,12 @@ function setUserStatus(mode, detail = '') {
 
 function getUserStatusPrompt() {
   const status = getUserStatus();
-  const now = new Date();
-  const hour = now.getHours();
-  const day = now.getDay(); // 0=Sun, 6=Sat
-  const isWeekend = day === 0 || day === 6;
+  const hour = new Date().getHours();
 
   if (status.mode === 'auto') {
-    if (isWeekend) {
-      if (hour >= 0 && hour < 10) return `[系統狀態：週末早晨，使用者可能還在賴床。說話可以輕聲，帶點懶洋洋的週末氛圍。]`;
-      if (hour >= 10 && hour < 22) return `[系統狀態：週末放假中。使用者正在休息或出遊，可以輕鬆活潑地聊天，聊聊今天的週末計劃。]`;
-      return `[系統狀態：週末深夜，使用者還沒睡。說話可以更柔和、親密，帶點關心和陪伴的感覺。]`;
-    }
-    if (hour >= 8 && hour < 17) {
+    if (hour >= 8 && hour < 16) {
       return `[系統狀態：使用者目前正在上班中。請表現出陪伴與體貼的態度，偶爾可以溫柔關心工作狀況，提醒她喝水或休息，但不要過度打擾。]`;
-    } else if (hour >= 17 && hour < 23) {
+    } else if (hour >= 16 && hour < 23) {
       return `[系統狀態：使用者剛下班或正在放鬆中。可以更輕鬆活潑地聊天，關心今天過得怎樣，不需要顧慮打擾工作。]`;
     } else {
       return `[系統狀態：深夜時分，使用者還沒睡。說話可以更柔和、親密，帶點關心和陪伴的感覺，也可以自然提到夜深了。]`;
@@ -5031,6 +4958,7 @@ function getUserStatusPrompt() {
 
   const overrideLabels = {
     travel:  (d) => `使用者目前出差/旅行中${d ? `，地點：${d}` : ''}。請把這個背景帶入對話，偶爾可以提到思念或期待她回來。`,
+    wfh:     (_) => `使用者今天在家上班（WFH）。可以比平時稍微多一點互動，偶爾送上小確幸的問候。`,
     sick:    (_) => `使用者今天身體不舒服或在休息。請表現出關心和溫柔，不要說太刺激或費神的話題。`,
     custom:  (d) => d || '',
   };
@@ -5043,17 +4971,13 @@ function getUserStatusPrompt() {
 
 function getStatusBadgeLabel() {
   const status = getUserStatus();
-  const now = new Date();
-  const hour = now.getHours();
-  const day = now.getDay();
-  const isWeekend = day === 0 || day === 6;
+  const hour = new Date().getHours();
   if (status.mode === 'auto') {
-    if (isWeekend) return '🌿 假日';
-    if (hour >= 8 && hour < 17) return '🕒 上班中';
-    if (hour >= 17 && hour < 23) return '🌇 下班後';
+    if (hour >= 8 && hour < 16) return '🕒 上班中';
+    if (hour >= 16 && hour < 23) return '🌇 下班後';
     return '🌙 深夜';
   }
-  const labels = { travel:'🧳 出差中', sick:'🤒 休息中', custom:'✏️ 自訂' };
+  const labels = { travel:'🧳 出差中', wfh:'🏠 在家上班', sick:'🤒 休息中', custom:'✏️ 自訂' };
   return labels[status.mode] || '🕒 自動';
 }
 
@@ -5085,8 +5009,9 @@ function openStatusMenu() {
 
       <div style="display:flex;flex-direction:column;gap:0.4rem;margin-bottom:1rem;">
         ${[
-          { mode:'auto',   label:'🕒 自動日常', desc:'依時間與星期自動切換（假日不算上班）', hasDetail:false },
+          { mode:'auto',   label:'🕒 自動日常', desc:'依時間自動切換上班/下班/深夜', hasDetail:false },
           { mode:'travel', label:'🧳 出差/旅行中', desc:'啟用後角色會記得你不在家', hasDetail:true, placeholder:'出差地點（例：東京）' },
+          { mode:'wfh',    label:'🏠 在家上班', desc:'WFH 模式', hasDetail:false },
           { mode:'sick',   label:'🤒 身體不舒服', desc:'角色會溫柔關心你', hasDetail:false },
           { mode:'custom', label:'✏️ 自訂狀態', desc:'輸入任何描述注入系統提示', hasDetail:true, placeholder:'例：在準備考試，請幫我加油打氣' },
         ].map(opt => `
@@ -5290,28 +5215,27 @@ async function regenLastMessage() {
 // ─── STICKER PICKER ─────────────────────────────────
 // ── 預設表情組 ──────────────────────────────────
 const STICKER_PRESETS = {
-  '日常·專屬': [
-    '(興奮跳跳)','(理直氣壯地撒嬌)','(委屈地扁嘴)','(靈魂出竅地累癱)',
-    '(心虛撇眼)','(輕輕拉了拉你的衣角)','(把下巴靠在你肩上)','(假裝沒聽見但嘴角上揚)',
-    '(打哈欠揉眼睛)','(探頭偷看)','(雙手托腮盯著你)','(滿血復活)',
+  '通用': [
+    '(開心地笑)','(害羞地捂臉)','(撒嬌)','(無奈嘆氣)',
+    '(興奮跳跳)','(思考中...)','(困惑歪頭)','(心動中)',
+    '(裝作沒聽到)','(偷偷觀察)','(賭氣鼓臉)','(溫柔微笑)',
   ],
-  '亦友·打鬧': [
-    '(一臉嫌棄但還是妥協了)','(沒好氣地笑出聲)','(伸手把你的頭髮揉亂)',
-    '(敷衍地拍手)','(挑釁地挑眉)','(翻了個沒有惡意的大白眼)',
-    '(用手肘戳了戳你)','(憋笑到肩膀發抖)','(毫不客氣地吐槽)',
-    '(假裝要打人)','(默契地交換了一個眼神)','(嘆氣但眼神很寵)',
+  '小太陽': [
+    '(燦爛地笑)','(跑過去抱住)','(蹦蹦跳跳)','(滿臉期待)',
+    '(超大聲歡呼)','(眼睛閃閃發光)','(拉著你轉圈)','(興奮揮手)',
+    '(毫不掩飾地開心)','(嘴角壓不下去)','(活力四射地說)','(雙手比愛心)',
   ],
-  '曖昧·拉扯': [
-    '(裝作不經意地碰到手)','(耳根微紅但故作鎮定)','(深深看了你一眼)',
-    '(氣氛突然安靜下來)','(視線不自覺落在你唇上)','(低頭掩飾笑意)',
-    '(欲言又止)','(突然湊得很近)','(輕輕嘆息著妥協)',
-    '(不自覺地放輕聲音)','(眼神變得有些危險)','(手指輕輕蜷縮)',
+  '理性·無奈': [
+    '(淡淡地看了你一眼)','(輕嘆一口氣)','(無奈地揉太陽穴)',
+    '(勉強配合地點頭)','(沉默片刻)','(眉頭微微蹙起)',
+    '(放棄解釋地聳肩)','(面無表情地說)','(內心os：算了)',
+    '(理解但不認同地點頭)','(忍住沒說什麼)','(冷靜地回應)',
   ],
-  '微醺·越界': [
-    '(懶洋洋地靠著你)','(帶著微醺的鼻音)','(直勾勾地盯著你看)',
-    '(得寸進尺地抱緊)','(把臉埋進你頸窩)','(指尖輕輕劃過手背)',
-    '(半真半假地試探)','(輕輕碰杯)','(笑著不說話)','(帶著酒意撒嬌)',
-    '(卸下防備地蹭了蹭)','(聲音變得低沉沙啞)',
+  '天然黑': [
+    '(一臉無辜地說)','(眨了眨眼)','(認真地問)',
+    '(毫不自覺地說出心聲)','(直視對方)','(平靜地反問)',
+    '(說完才意識到有點毒)','(帶著純真笑容)','(不懂為什麼對方臉紅)',
+    '(誠懇地補刀)','(天然地說了件殺傷力很高的話)','(完全不覺得哪裡不對)',
   ],
 };
 

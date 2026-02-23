@@ -265,104 +265,6 @@ async function saveSettings() {
 
 // ─── SETUP / ENTER APP ────────────────────────────
 
-// ─── 離線模擬訊息機制 ─────────────────────────────────
-// 原理：記錄離開時間，回來時若超過閾值則補發「錯過的訊息」並標記為過去的時間
-
-const OFFLINE_MSG_KEY = 'erh_last_seen';
-const OFFLINE_MIN_AWAY = 60 * 60 * 1000;  // 至少離開 1 小時才觸發
-const OFFLINE_MAX_AWAY = 48 * 60 * 60 * 1000; // 離開超過 48 小時就不補（太久了）
-
-// 每次頁面 hide 時記錄時間
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    localStorage.setItem(OFFLINE_MSG_KEY, Date.now().toString());
-  }
-});
-window.addEventListener('pagehide', () => {
-  localStorage.setItem(OFFLINE_MSG_KEY, Date.now().toString());
-});
-
-async function checkOfflineMessages() {
-  // 需要有活躍角色和對話
-  if (!state.activeCharId || !state.activeChat) return;
-  if (!state.apiKey) return;
-
-  const lastSeenStr = localStorage.getItem(OFFLINE_MSG_KEY);
-  if (!lastSeenStr) {
-    // 第一次，只記錄
-    localStorage.setItem(OFFLINE_MSG_KEY, Date.now().toString());
-    return;
-  }
-
-  const lastSeen = parseInt(lastSeenStr);
-  const awayMs = Date.now() - lastSeen;
-
-  // 不在範圍內就跳過
-  if (awayMs < OFFLINE_MIN_AWAY || awayMs > OFFLINE_MAX_AWAY) {
-    localStorage.setItem(OFFLINE_MSG_KEY, Date.now().toString());
-    return;
-  }
-
-  // 每次開啟最多觸發一則，且同一天只觸發一次（避免重複）
-  const todayKey = new Date().toDateString();
-  const offlineKey = `erh_offline_${state.activeCharId}_${todayKey}`;
-  if (localStorage.getItem(offlineKey)) return;
-
-  const chat = state.chats.find(c => c.id === state.activeChat);
-  const char = state.chars.find(c => c.id === state.activeCharId);
-  if (!chat || !char) return;
-
-  // 計算訊息要標記的「假時間」（離開後 30 分鐘～離開後 80% 的時間點）
-  const minOffset = 30 * 60 * 1000;
-  const maxOffset = Math.floor(awayMs * 0.8);
-  const msgOffset = minOffset + Math.random() * (maxOffset - minOffset);
-  const fakeTime = lastSeen + msgOffset;
-
-  const awayHours = (awayMs / 3600000).toFixed(1);
-  const recentMsgs = chat.messages.slice(-8)
-    .map(m => `${m.role === 'user' ? '我' : char.name}: ${m.content}`).join('\n');
-  const relLv = getRelLevel(char.id);
-
-  const prompt = `你是 ${char.name}。${char.desc?.slice(0, 200) || ''}
-目前的關係：${relLv.label}。
-
-你們最近的對話：
-${recentMsgs || '（尚無對話記錄）'}
-
-對方已經 ${awayHours} 小時沒有回覆了。
-請以你的個性，傳一則自然的訊息給他。
-可以是：想他、好奇他在做什麼、分享自己遇到的事、輕微的撒嬌或抱怨他失蹤等。
-風格要符合你目前「${relLv.label}」的關係，不要過度親密或疏遠。
-只輸出訊息內容，不加任何說明、引號或前綴。訊息字數 15～60 字。`;
-
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${getModel('chat')}:generateContent?key=${state.apiKey}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 1.2, maxOutputTokens: 1500 }
-      })
-    });
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (text) {
-      // 用假時間插入訊息
-      const msg = { id: uid(), role: 'ai', content: text, type: 'text', imageUrl: null, time: fakeTime };
-      chat.messages.push(msg);
-      // 依時間排序（假訊息插入正確位置）
-      chat.messages.sort((a, b) => a.time - b.time);
-      await dbPut('chats', chat);
-      renderMessages(state.activeChat);
-      localStorage.setItem(offlineKey, '1');
-      localStorage.setItem(OFFLINE_MSG_KEY, Date.now().toString());
-      // 顯示一個輕提示
-      setTimeout(() => showToast(`💬 ${char.name} 在你離開時傳了一則訊息`), 800);
-    }
-  } catch(e) { /* silent */ }
-}
-
 function enterApp() {
   const key = document.getElementById('api-key-input').value.trim();
   const customModel = document.getElementById('model-custom-input-setup')?.value?.trim();
@@ -389,7 +291,6 @@ function enterApp() {
   initDiary();
   renderSocialFeed();
   checkRealWorldEvents();
-  setTimeout(checkOfflineMessages, 1500); // 延遲執行避免阻塞初始化
   renderAnniversaryList();
   updateChatStatsCounts();
   checkAnniversaryReminders();
@@ -491,6 +392,9 @@ async function openFoyerReport(charId) {
 
   // 標記已讀
   localStorage.setItem(readKey, '1');
+  // 同時標記「今天已看過早報」，避免進聊天室時再次觸發
+  const todayKey = new Date().toDateString();
+  localStorage.setItem(`erh_daily_report_seen_${charId}_${todayKey}`, '1');
   // 更新 UI
   renderFoyerNewsstand();
 
@@ -1381,7 +1285,9 @@ async function sendMessage() {
 
 async function callGemini(chatId, userMessage, overrideSystem = null, userImages = []) {
   const chat = state.chats.find(c => c.id === chatId);
+  if (!chat) return [];
   const char = state.chars.find(c => c.id === chat.charId);
+  if (!char) return [];
   const persona = char?.personaId ? state.personas.find(p => p.id === char.personaId) : null;
 
   // Build system prompt
@@ -3774,32 +3680,24 @@ function saveAutoMsgHours() {
 const FIXED_HOLIDAYS = [
   // 元旦 & 新年
   { month:1,  day:1,  name:'元旦・新年',          emoji:'🎊' },
+  // 情人節前夕
+  { month:2,  day:13, name:'情人節前夕',           emoji:'💌' },
   // 情人節
   { month:2,  day:14, name:'西洋情人節',           emoji:'💕' },
   // 白色情人節
   { month:3,  day:14, name:'白色情人節',           emoji:'🤍' },
   // 愚人節
   { month:4,  day:1,  name:'愚人節',               emoji:'🃏' },
-  // 兒童節
-  { month:4,  day:4,  name:'兒童節',               emoji:'🎠' },
-  // 母親節（5月第二個星期日，在下面動態計算）
-  // 父親節（台灣8/8）
-  { month:8,  day:8,  name:'父親節',               emoji:'👨' },
-  // 中秋節（農曆8/15，下面動態計算近似值）
-  // 七夕（農曆7/7，下面動態計算）
+  // 萬聖節
+  { month:10, day:31, name:'萬聖節',               emoji:'🎃' },
+  // 聖誕節前夕
+  { month:12, day:23, name:'聖誕節前夕',           emoji:'⛄' },
   // 聖誕夜
   { month:12, day:24, name:'平安夜',               emoji:'🕯️' },
   // 聖誕節
   { month:12, day:25, name:'聖誕節',               emoji:'🎄' },
-  // 除夕（農曆12/30，下面動態計算）
   // 跨年
   { month:12, day:31, name:'跨年夜',               emoji:'🎆' },
-  // 萬聖節
-  { month:10, day:31, name:'萬聖節',               emoji:'🎃' },
-  // 情人節前一天
-  { month:2,  day:13, name:'情人節前夕',           emoji:'💌' },
-  // 聖誕節前一週
-  { month:12, day:23, name:'聖誕節前夕',           emoji:'⛄' },
 ];
 
 // 動態計算「第N個星期W」型節日
@@ -3818,25 +3716,8 @@ function getNthWeekday(year, month, nth, weekday) {
   return null;
 }
 
-// 農曆→公曆換算（近似，用查表方式覆蓋2024~2030）
-// [year, lunarMonth, lunarDay] → Gregorian date string 'YYYY-MM-DD'
+// 農曆→公曆換算（七夕情人節，2024~2030）
 const LUNAR_DATES = {
-  // 春節（農曆1/1）
-  '2024-spring': '2024-02-10',
-  '2025-spring': '2025-01-29',
-  '2026-spring': '2026-02-17',
-  '2027-spring': '2027-02-06',
-  '2028-spring': '2028-01-26',
-  '2029-spring': '2029-02-13',
-  '2030-spring': '2030-02-03',
-  // 元宵（農曆1/15）
-  '2024-lantern': '2024-02-24',
-  '2025-lantern': '2025-02-12',
-  '2026-lantern': '2026-03-04',
-  '2027-lantern': '2027-02-21',
-  '2028-lantern': '2028-02-10',
-  '2029-lantern': '2029-02-28',
-  '2030-lantern': '2030-02-18',
   // 七夕（農曆7/7）
   '2024-qixi': '2024-08-10',
   '2025-qixi': '2025-08-29',
@@ -3845,22 +3726,6 @@ const LUNAR_DATES = {
   '2028-qixi': '2028-08-26',
   '2029-qixi': '2029-08-15',
   '2030-qixi': '2030-09-03',
-  // 中秋（農曆8/15）
-  '2024-mid-autumn': '2024-09-17',
-  '2025-mid-autumn': '2025-10-06',
-  '2026-mid-autumn': '2026-09-25',
-  '2027-mid-autumn': '2027-09-15',
-  '2028-mid-autumn': '2028-10-03',
-  '2029-mid-autumn': '2029-09-22',
-  '2030-mid-autumn': '2030-09-12',
-  // 除夕（春節前一天）
-  '2024-new-year-eve': '2024-02-09',
-  '2025-new-year-eve': '2025-01-28',
-  '2026-new-year-eve': '2026-02-16',
-  '2027-new-year-eve': '2027-02-05',
-  '2028-new-year-eve': '2028-01-25',
-  '2029-new-year-eve': '2029-02-12',
-  '2030-new-year-eve': '2030-02-02',
 };
 
 function getTodayHolidays() {
@@ -3876,25 +3741,9 @@ function getTodayHolidays() {
     if (h.month === month && h.day === day) found.push(h);
   }
 
-  // 動態：母親節（5月第二個星期日）
-  const mothersDay = getNthWeekday(year, 5, 2, 0);
-  if (mothersDay && mothersDay.month === month && mothersDay.day === day) {
-    found.push({ name:'母親節', emoji:'🌸' });
-  }
-
-  // 動態：父親節（台灣8/8已在固定清單，另加國際父親節6月第三個星期日）
-  const fathersDay = getNthWeekday(year, 6, 3, 0);
-  if (fathersDay && fathersDay.month === month && fathersDay.day === day) {
-    found.push({ name:'國際父親節', emoji:'👔' });
-  }
-
-  // 農曆節日查表
+  // 農曆節日查表（只有七夕）
   const lunarEvents = [
-    { key: 'spring',       name:'農曆新年・春節',  emoji:'🧨' },
-    { key: 'lantern',      name:'元宵節',          emoji:'🏮' },
-    { key: 'qixi',         name:'七夕情人節',       emoji:'🌌' },
-    { key: 'mid-autumn',   name:'中秋節',           emoji:'🌕' },
-    { key: 'new-year-eve', name:'除夕',             emoji:'🧧' },
+    { key: 'qixi', name:'七夕情人節', emoji:'🌌' },
   ];
   for (const ev of lunarEvents) {
     const dateStr = LUNAR_DATES[`${year}-${ev.key}`];
@@ -4545,25 +4394,25 @@ async function triggerAIAskTopic(charId) {
 
 // ─── 碎片畫廊 (Fragment Gallery) ───────────────────────
 // 好感度門檻：每 50/100 分解鎖一片
-const FRAGMENT_THRESHOLDS = [50,100,150,200,300,400,500,600,750,900,1100,1300,1500,1800,2100,2500];
+const FRAGMENT_THRESHOLDS = [50,100,150,200,270,350,440,540,640,760,880,1020,1160,1280,1400,1500];
 
 const FRAGMENT_DEPTH_HINTS = {
   50:   '初次印象',
   100:  '日常碎片',
   150:  '小小秘密',
   200:  '某個習慣',
-  300:  '過去的故事',
-  400:  '關於你',
-  500:  '從未說過的話',
-  600:  '內心深處',
-  750:  '特別的記憶',
-  900:  '只給你看',
-  1100: '珍藏的秘密',
-  1300: '關於我們',
-  1500: '心裡話',
-  1800: '告白碎片',
-  2100: '最深的秘密',
-  2500: '核心碎片',
+  270:  '過去的故事',
+  350:  '關於你',
+  440:  '從未說過的話',
+  540:  '內心深處',
+  640:  '特別的記憶',
+  760:  '只給你看',
+  880:  '珍藏的秘密',
+  1020: '關於我們',
+  1160: '心裡話',
+  1280: '告白碎片',
+  1400: '最深的秘密',
+  1500: '核心碎片',
 };
 
 async function checkFragmentUnlock(charId) {

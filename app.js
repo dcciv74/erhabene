@@ -114,7 +114,13 @@ function initDB() {
     };
     req.onsuccess = e => { DB = e.target.result; res(DB); };
     req.onerror = e => rej(e.target.error);
-    req.onblocked = () => console.warn('DB blocked');
+    req.onblocked = () => {
+      console.warn('DB blocked — closing other tabs may help');
+      // 不要讓 Promise 永久 pending，給一個 fallback
+      setTimeout(() => {
+        if (!DB) rej(new Error('IndexedDB blocked'));
+      }, 3000);
+    };
   });
 }
 
@@ -265,11 +271,18 @@ async function saveSettings() {
 
 // ─── SETUP / ENTER APP ────────────────────────────
 
+
 function enterApp() {
-  const key = document.getElementById('api-key-input').value.trim();
+  // 優先從 localStorage 讀取（重載時 DOM input 可能還沒填值）
+  const keyFromInput = document.getElementById('api-key-input')?.value.trim();
+  const keyFromStorage = localStorage.getItem('erh_key') || '';
+  const key = keyFromInput || keyFromStorage;
+
   const customModel = document.getElementById('model-custom-input-setup')?.value?.trim();
   const selectModel = document.getElementById('model-select')?.value;
-  const model = customModel || selectModel || 'gemini-3-flash-preview';
+  const modelFromStorage = localStorage.getItem('erh_model') || '';
+  const model = customModel || selectModel || modelFromStorage || 'gemini-2.0-flash';
+
   if (!key) { showToast('請輸入 API Key'); return; }
   state.apiKey = key;
   state.model = model;
@@ -926,16 +939,57 @@ function openChat(chatId) {
 }
 
 // ─── MESSAGES ───────────────────────────────────────
+// 記錄每個 chatId 是否展開所有訊息
+const _chatExpandedState = {};
+const COLLAPSE_THRESHOLD = 20; // 超過此數量才折疊
+const VISIBLE_RECENT = 20;     // 預設顯示最近幾則
+
 function renderMessages(chatId, opts = {}) {
   const chat = state.chats.find(c => c.id === chatId);
   if (!chat) return;
   const area = document.getElementById('messages-area');
   area.innerHTML = '';
 
+  const allMessages = chat.messages;
+  const totalCount = allMessages.length;
+  const isExpanded = _chatExpandedState[chatId] || false;
+
+  // 決定要渲染哪些訊息
+  let messagesToRender = allMessages;
+  let hiddenCount = 0;
+  if (totalCount > COLLAPSE_THRESHOLD && !isExpanded) {
+    hiddenCount = totalCount - VISIBLE_RECENT;
+    messagesToRender = allMessages.slice(hiddenCount);
+  }
+
+  // 若有折疊的訊息，顯示「展開舊訊息」按鈕
+  if (hiddenCount > 0) {
+    const collapseBtn = document.createElement('div');
+    collapseBtn.style.cssText = `
+      display:flex; flex-direction:column; align-items:center;
+      padding:0.8rem 1rem; gap:0.3rem;
+    `;
+    collapseBtn.innerHTML = `
+      <button onclick="expandChatHistory('${chatId}')" style="
+        background:rgba(201,184,232,0.18);
+        border:1px solid rgba(201,184,232,0.35);
+        border-radius:20px; padding:0.4rem 1.2rem;
+        font-family:inherit; font-size:0.78rem;
+        color:var(--text-mid); cursor:pointer;
+        display:flex; align-items:center; gap:0.4rem;
+        transition:background 0.15s;
+      ">
+        <span>⬆️</span>
+        <span>載入更早的 ${hiddenCount} 則訊息</span>
+      </button>
+    `;
+    area.appendChild(collapseBtn);
+  }
+
   // Group consecutive messages by role
   let groups = [];
   let currentGroup = null;
-  chat.messages.forEach(msg => {
+  messagesToRender.forEach(msg => {
     if (!currentGroup || currentGroup.role !== msg.role) {
       currentGroup = { role: msg.role, messages: [] };
       groups.push(currentGroup);
@@ -1098,6 +1152,23 @@ function renderMessages(chatId, opts = {}) {
   } else {
     scrollToBottom();
   }
+}
+
+function expandChatHistory(chatId) {
+  _chatExpandedState[chatId] = true;
+  const area = document.getElementById('messages-area');
+  const prevHeight = area.scrollHeight;
+  renderMessages(chatId, { preserveScroll: false });
+  // 保持捲動位置（讓新載入的舊訊息出現在上方，畫面不跳動）
+  requestAnimationFrame(() => {
+    const newHeight = area.scrollHeight;
+    area.scrollTop = newHeight - prevHeight;
+  });
+}
+
+function collapseChatHistory(chatId) {
+  _chatExpandedState[chatId] = false;
+  renderMessages(chatId);
 }
 
 function showMobileActionBar(msgId, isUser) {
@@ -1288,6 +1359,7 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
   if (!chat) return [];
   const char = state.chars.find(c => c.id === chat.charId);
   if (!char) return [];
+  if (!state.apiKey) throw new Error('API Key 未設定，請重新登入');
   const persona = char?.personaId ? state.personas.find(p => p.id === char.personaId) : null;
 
   // Build system prompt
@@ -3678,26 +3750,16 @@ function saveAutoMsgHours() {
 // ─── HOLIDAY / REAL WORLD EVENTS ────────────────────
 // 固定日期節日（公曆）
 const FIXED_HOLIDAYS = [
-  // 元旦 & 新年
-  { month:1,  day:1,  name:'元旦・新年',          emoji:'🎊' },
-  // 情人節前夕
-  { month:2,  day:13, name:'情人節前夕',           emoji:'💌' },
-  // 情人節
-  { month:2,  day:14, name:'西洋情人節',           emoji:'💕' },
-  // 白色情人節
-  { month:3,  day:14, name:'白色情人節',           emoji:'🤍' },
-  // 愚人節
-  { month:4,  day:1,  name:'愚人節',               emoji:'🃏' },
-  // 萬聖節
-  { month:10, day:31, name:'萬聖節',               emoji:'🎃' },
-  // 聖誕節前夕
-  { month:12, day:23, name:'聖誕節前夕',           emoji:'⛄' },
-  // 聖誕夜
-  { month:12, day:24, name:'平安夜',               emoji:'🕯️' },
-  // 聖誕節
-  { month:12, day:25, name:'聖誕節',               emoji:'🎄' },
-  // 跨年
-  { month:12, day:31, name:'跨年夜',               emoji:'🎆' },
+  { month:1,  day:1,  name:'元旦・新年',   emoji:'🎊' },
+  { month:2,  day:13, name:'情人節前夕',   emoji:'💌' },
+  { month:2,  day:14, name:'西洋情人節',   emoji:'💕' },
+  { month:3,  day:14, name:'白色情人節',   emoji:'🤍' },
+  { month:4,  day:1,  name:'愚人節',       emoji:'🃏' },
+  { month:10, day:31, name:'萬聖節',       emoji:'🎃' },
+  { month:12, day:23, name:'聖誕節前夕',   emoji:'⛄' },
+  { month:12, day:24, name:'平安夜',       emoji:'🕯️' },
+  { month:12, day:25, name:'聖誕節',       emoji:'🎄' },
+  { month:12, day:31, name:'跨年夜',       emoji:'🎆' },
 ];
 
 // 動態計算「第N個星期W」型節日
@@ -3726,6 +3788,7 @@ const LUNAR_DATES = {
   '2028-qixi': '2028-08-26',
   '2029-qixi': '2029-08-15',
   '2030-qixi': '2030-09-03',
+}
 };
 
 function getTodayHolidays() {
@@ -4440,17 +4503,14 @@ async function generateFragment(charId, threshold) {
   const typeLabels = { monologue:'內心獨白', letter:'未寄出的信', memory:'記憶碎片', observation:'偷偷觀察', confession:'心裡話' };
   const chosenType = types[Math.floor(Math.random() * types.length)];
 
-  // 收集 persona 資訊
   const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
   const personaBlock = persona
     ? `[用戶 Persona]\n姓名：${persona.name}${persona.desc ? `\n${persona.desc}` : ''}`
     : '';
-
-  // 擷取最近 30 則對話作為背景脈絡
-  const chat = state.chats.find(c => c.charId === charId);
+  const chatObj = state.chats.find(c => c.charId === charId);
   let recentChatBlock = '';
-  if (chat && chat.messages.length) {
-    const recentMsgs = chat.messages.filter(m => m.role !== 'system').slice(-30);
+  if (chatObj && chatObj.messages.length) {
+    const recentMsgs = chatObj.messages.filter(m => m.role !== 'system').slice(-30);
     const chatSummary = recentMsgs.map(m => {
       const speaker = m.role === 'assistant' ? char.name : (persona?.name || '她');
       return `${speaker}：${m.content.slice(0, 100)}`;
@@ -6973,17 +7033,25 @@ async function sendHiddenSpecialPrompt(hiddenSystemPrompt, eventName, emoji, cha
   try {
     await initDB();
     await loadAllData();
-  } catch(e) { console.warn('DB init error:', e); }
+  } catch(e) {
+    console.warn('DB init error:', e);
+    // DB 失敗不應阻止 app 啟動（資料暫時無法讀取，但 UI 仍可運作）
+  }
 
-  // Check saved credentials
+  // Check saved credentials — 不管 DB 成不成功都要嘗試登入
   const savedKey = localStorage.getItem('erh_key');
   const savedModel = localStorage.getItem('erh_model');
 
   if (savedKey) {
+    // 先填 DOM input（供 enterApp 讀取）
     const keyInput = document.getElementById('api-key-input');
     const modelSel = document.getElementById('model-select');
     if (keyInput) keyInput.value = savedKey;
-    if (savedModel && modelSel) modelSel.value = savedModel;
+    if (savedModel && modelSel) {
+      // 只有在 select 有這個 option 時才設定
+      const opt = [...modelSel.options].find(o => o.value === savedModel);
+      if (opt) modelSel.value = savedModel;
+    }
     enterApp();
   }
 

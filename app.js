@@ -291,7 +291,6 @@ function enterApp() {
   initDiary();
   renderSocialFeed();
   checkRealWorldEvents();
-  setTimeout(checkOfflineMessages, 1500); // 延遲執行避免阻塞初始化
   renderAnniversaryList();
   updateChatStatsCounts();
   checkAnniversaryReminders();
@@ -393,6 +392,9 @@ async function openFoyerReport(charId) {
 
   // 標記已讀
   localStorage.setItem(readKey, '1');
+  // 同時標記「今天已看過早報」，避免進聊天室時再次觸發
+  const todayKey = new Date().toDateString();
+  localStorage.setItem(`erh_daily_report_seen_${charId}_${todayKey}`, '1');
   // 更新 UI
   renderFoyerNewsstand();
 
@@ -620,7 +622,17 @@ function renderMobileChatList() {
     return bTime - aTime;
   });
 
-  let html = `<div style="padding:0.8rem 1rem 0.4rem;font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>`;
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem 0.4rem;">
+      <div style="font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>
+      <button onclick="switchPage('chars')" style="
+        display:flex;align-items:center;gap:0.3rem;
+        background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.25);
+        border-radius:20px;padding:0.3rem 0.7rem;cursor:pointer;
+        font-size:0.72rem;color:var(--text-mid);font-weight:500;
+        transition:all 0.15s;
+      ">👤 角色</button>
+    </div>`;
 
   sortedChats.forEach(chat => {
     const char = state.chars.find(c => c.id === chat.charId);
@@ -914,10 +926,10 @@ function openChat(chatId) {
 }
 
 // ─── MESSAGES ───────────────────────────────────────
-// ─── 訊息視窗大小（只渲染最近 N 則）────────────────────
+// ─── 訊息視窗（只渲染最近 N 則，節省記憶體）────────────
 const MSG_WINDOW = 30;
 
-// 建立單一訊息 row 的 DOM 節點（供 renderMessages 和 appendMsg 共用）
+// 建立單一訊息 row 的 DOM 節點
 function buildMsgRow(msg, char, isFirstInGroup, isLastInGroup) {
   const row = document.createElement('div');
   row.className = 'msg-row';
@@ -968,7 +980,6 @@ function buildMsgRow(msg, char, isFirstInGroup, isLastInGroup) {
     delLayer.style.cssText = `position:absolute;top:0;right:0;bottom:0;width:70px;background:linear-gradient(135deg,#e87878,#d04040);display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;border-radius:12px;pointer-events:none;opacity:0;transition:opacity 0.1s;`;
     wrapper.appendChild(delLayer);
     wrapper.appendChild(row);
-
     let swStartX = 0, swStartY = 0, swTracking = false, swOffset = 0;
     const MAX_SWIPE = 75, TRIGGER = 55;
     row.addEventListener('touchstart', e => { swStartX = e.touches[0].clientX; swStartY = e.touches[0].clientY; swTracking = true; row.style.transition = 'none'; }, { passive: true });
@@ -998,7 +1009,7 @@ function buildMsgRow(msg, char, isFirstInGroup, isLastInGroup) {
       swOffset = 0;
     });
     row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
-    return wrapper; // swipe mode returns wrapper, not row
+    return wrapper;
   } else {
     const delBtnHtml = `<button class="msg-del-btn" onclick="deleteMsgDirect('${msg.id}')" title="刪除">×</button>`;
     if (isUser) {
@@ -1023,7 +1034,6 @@ function renderMsgSlice(msgs, char, container, lastDateRef) {
     }
     currentGroup.messages.push(msg);
   });
-
   groups.forEach(group => {
     const firstMsg = group.messages[0];
     const msgDate = new Date(firstMsg.time).toLocaleDateString('zh-TW');
@@ -1063,11 +1073,7 @@ function renderMessages(chatId, opts = {}) {
     const loadBtn = document.createElement('div');
     loadBtn.id = 'load-more-msgs';
     loadBtn.style.cssText = 'text-align:center;padding:0.6rem 0 0.2rem;';
-    loadBtn.innerHTML = `<button onclick="loadMoreMessages(${startIdx},'${chatId}')" style="
-      background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.3);
-      border-radius:20px;padding:0.3rem 1rem;font-size:0.72rem;
-      color:var(--text-light);cursor:pointer;font-family:inherit;
-    ">↑ 載入更早的 ${hiddenCount} 則訊息</button>`;
+    loadBtn.innerHTML = `<button onclick="loadMoreMessages(${startIdx},'${chatId}')" style="background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.3);border-radius:20px;padding:0.3rem 1rem;font-size:0.72rem;color:var(--text-light);cursor:pointer;font-family:inherit;">↑ 載入更早的 ${hiddenCount} 則訊息</button>`;
     area.appendChild(loadBtn);
   }
 
@@ -1090,7 +1096,7 @@ function renderMessages(chatId, opts = {}) {
   }
 }
 
-// 載入更早的訊息（點「載入更多」按鈕觸發）
+// 向上載入更多訊息
 function loadMoreMessages(currentStartIdx, chatId) {
   const chat = state.chats.find(c => c.id === chatId);
   if (!chat) return;
@@ -1103,26 +1109,18 @@ function loadMoreMessages(currentStartIdx, chatId) {
   const moreMsgs = allMsgs.slice(newStartIdx, currentStartIdx);
   const stillHidden = newStartIdx;
 
-  // 記住目前高度，以便載入後維持視角
   const prevHeight = area.scrollHeight;
 
-  // 更新或移除「載入更多」按鈕
   if (stillHidden > 0) {
-    loadBtn.innerHTML = `<button onclick="loadMoreMessages(${newStartIdx},'${chatId}')" style="
-      background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.3);
-      border-radius:20px;padding:0.3rem 1rem;font-size:0.72rem;
-      color:var(--text-light);cursor:pointer;font-family:inherit;
-    ">↑ 載入更早的 ${stillHidden} 則訊息</button>`;
+    loadBtn.innerHTML = `<button onclick="loadMoreMessages(${newStartIdx},'${chatId}')" style="background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.3);border-radius:20px;padding:0.3rem 1rem;font-size:0.72rem;color:var(--text-light);cursor:pointer;font-family:inherit;">↑ 載入更早的 ${stillHidden} 則訊息</button>`;
   } else {
-    loadBtn.remove();
+    loadBtn?.remove();
   }
 
-  // 把舊訊息插在最前面（loadBtn 之後，現有訊息之前）
   const frag = document.createDocumentFragment();
   const lastDateRef = { value: null };
   renderMsgSlice(moreMsgs, char, frag, lastDateRef);
 
-  // 找第一個 msg-group 或 date-divider 插入點
   const firstExisting = area.querySelector('.msg-group, .date-divider');
   if (firstExisting) {
     area.insertBefore(frag, firstExisting);
@@ -1130,8 +1128,50 @@ function loadMoreMessages(currentStartIdx, chatId) {
     area.appendChild(frag);
   }
 
-  // 維持滾動位置（讓使用者看到原來那則訊息）
   area.scrollTop = area.scrollHeight - prevHeight;
+}
+
+// 只把最新一則 append 到 DOM（不重渲整個列表）
+function appendMsgToArea(msg, chatId) {
+  const area = document.getElementById('messages-area');
+  if (!area) return;
+  const char = state.chars.find(c => c.id === state.activeCharId);
+  const typingEl = document.getElementById('typing-indicator');
+
+  const chat = state.chats.find(c => c.id === chatId);
+  const allMsgs = chat?.messages.filter(m => m.role !== 'system') || [];
+  const prevMsg = allMsgs.length >= 2 ? allMsgs[allMsgs.length - 2] : null;
+  const sameRole = prevMsg && prevMsg.role === msg.role;
+
+  // 日期分隔線
+  const msgDate = new Date(msg.time).toLocaleDateString('zh-TW');
+  const lastDivider = area.querySelector('.date-divider:last-of-type');
+  if (!lastDivider || lastDivider.querySelector('span')?.textContent !== msgDate) {
+    const div = document.createElement('div');
+    div.className = 'date-divider';
+    div.innerHTML = `<span>${msgDate}</span>`;
+    area.insertBefore(div, typingEl || null);
+  }
+
+  // 若 role 和前一則相同，加入最後那個 group；否則建新 group
+  const allGroups = [...area.querySelectorAll('.msg-group')];
+  const trueLastGroup = allGroups[allGroups.length - 1];
+  let groupEl;
+  if (sameRole && trueLastGroup && trueLastGroup.classList.contains(msg.role)) {
+    groupEl = trueLastGroup;
+    // 把前一則的 time 標籤移除（只顯示最後一則的時間）
+    const prevTimeEl = groupEl.querySelector('.msg-time:last-of-type');
+    if (prevTimeEl) prevTimeEl.remove();
+  } else {
+    groupEl = document.createElement('div');
+    groupEl.className = 'msg-group ' + msg.role;
+    area.insertBefore(groupEl, typingEl || null);
+  }
+
+  const isFirst = groupEl.querySelectorAll('.msg-row, .swipe-wrapper').length === 0;
+  const node = buildMsgRow(msg, char, isFirst, true);
+  groupEl.appendChild(node);
+  scrollToBottom();
 }
 
 function showMobileActionBar(msgId, isUser) {
@@ -1212,56 +1252,6 @@ function addUserMessage(chatId, content) {
   dbPut('chats', chat);
   if (state.activeChat === chatId) appendMsgToArea(msg, chatId);
   return msg;
-}
-
-// 把單一新訊息 append 到目前聊天視窗（不重渲整個列表）
-function appendMsgToArea(msg, chatId) {
-  const area = document.getElementById('messages-area');
-  if (!area) return;
-  const char = state.chars.find(c => c.id === state.activeCharId);
-
-  // 找 typing-indicator，把新節點插在它之前
-  const typingEl = document.getElementById('typing-indicator');
-
-  // 判斷前一則訊息的 role，決定是否要新開 group
-  const chat = state.chats.find(c => c.id === chatId);
-  const allMsgs = chat?.messages.filter(m => m.role !== 'system') || [];
-  const prevMsg = allMsgs.length >= 2 ? allMsgs[allMsgs.length - 2] : null;
-  const sameRole = prevMsg && prevMsg.role === msg.role;
-
-  // 日期分隔線（如果今天是新的一天）
-  const msgDate = new Date(msg.time).toLocaleDateString('zh-TW');
-  const lastDivider = area.querySelector('.date-divider:last-of-type');
-  if (!lastDivider || lastDivider.querySelector('span')?.textContent !== msgDate) {
-    const div = document.createElement('div');
-    div.className = 'date-divider';
-    div.innerHTML = `<span>${msgDate}</span>`;
-    area.insertBefore(div, typingEl || null);
-  }
-
-  // 若 role 和前一則相同，找最後一個同 role 的 group，append 進去
-  // 否則建立新 group
-  let groupEl;
-  const lastGroup = area.querySelector(`.msg-group.${msg.role}:last-of-type`);
-  // 確認 lastGroup 確實是緊接在最後（沒有其他 role 的 group 在它之後）
-  const allGroups = [...area.querySelectorAll('.msg-group')];
-  const trueLastGroup = allGroups[allGroups.length - 1];
-  if (sameRole && trueLastGroup && trueLastGroup.classList.contains(msg.role)) {
-    groupEl = trueLastGroup;
-    // 把前一則的 time 標籤移除（只有最後一則顯示）
-    const prevTimeEl = groupEl.querySelector('.msg-time:last-of-type');
-    if (prevTimeEl) prevTimeEl.remove();
-  } else {
-    groupEl = document.createElement('div');
-    groupEl.className = 'msg-group ' + msg.role;
-    area.insertBefore(groupEl, typingEl || null);
-  }
-
-  const isFirst = groupEl.querySelectorAll('.msg-row, .swipe-wrapper').length === 0;
-  const node = buildMsgRow(msg, char, isFirst, true); // isLast=true（最新一則永遠顯示時間）
-  groupEl.appendChild(node);
-
-  scrollToBottom();
 }
 
 // ─── CHAT IMAGE UPLOAD ──────────────────────────────
@@ -1367,7 +1357,9 @@ async function sendMessage() {
 
 async function callGemini(chatId, userMessage, overrideSystem = null, userImages = []) {
   const chat = state.chats.find(c => c.id === chatId);
+  if (!chat) return [];
   const char = state.chars.find(c => c.id === chat.charId);
+  if (!char) return [];
   const persona = char?.personaId ? state.personas.find(p => p.id === char.personaId) : null;
 
   // Build system prompt
@@ -3760,32 +3752,24 @@ function saveAutoMsgHours() {
 const FIXED_HOLIDAYS = [
   // 元旦 & 新年
   { month:1,  day:1,  name:'元旦・新年',          emoji:'🎊' },
+  // 情人節前夕
+  { month:2,  day:13, name:'情人節前夕',           emoji:'💌' },
   // 情人節
   { month:2,  day:14, name:'西洋情人節',           emoji:'💕' },
   // 白色情人節
   { month:3,  day:14, name:'白色情人節',           emoji:'🤍' },
   // 愚人節
   { month:4,  day:1,  name:'愚人節',               emoji:'🃏' },
-  // 兒童節
-  { month:4,  day:4,  name:'兒童節',               emoji:'🎠' },
-  // 母親節（5月第二個星期日，在下面動態計算）
-  // 父親節（台灣8/8）
-  { month:8,  day:8,  name:'父親節',               emoji:'👨' },
-  // 中秋節（農曆8/15，下面動態計算近似值）
-  // 七夕（農曆7/7，下面動態計算）
+  // 萬聖節
+  { month:10, day:31, name:'萬聖節',               emoji:'🎃' },
+  // 聖誕節前夕
+  { month:12, day:23, name:'聖誕節前夕',           emoji:'⛄' },
   // 聖誕夜
   { month:12, day:24, name:'平安夜',               emoji:'🕯️' },
   // 聖誕節
   { month:12, day:25, name:'聖誕節',               emoji:'🎄' },
-  // 除夕（農曆12/30，下面動態計算）
   // 跨年
   { month:12, day:31, name:'跨年夜',               emoji:'🎆' },
-  // 萬聖節
-  { month:10, day:31, name:'萬聖節',               emoji:'🎃' },
-  // 情人節前一天
-  { month:2,  day:13, name:'情人節前夕',           emoji:'💌' },
-  // 聖誕節前一週
-  { month:12, day:23, name:'聖誕節前夕',           emoji:'⛄' },
 ];
 
 // 動態計算「第N個星期W」型節日
@@ -3804,25 +3788,8 @@ function getNthWeekday(year, month, nth, weekday) {
   return null;
 }
 
-// 農曆→公曆換算（近似，用查表方式覆蓋2024~2030）
-// [year, lunarMonth, lunarDay] → Gregorian date string 'YYYY-MM-DD'
+// 農曆→公曆換算（七夕情人節，2024~2030）
 const LUNAR_DATES = {
-  // 春節（農曆1/1）
-  '2024-spring': '2024-02-10',
-  '2025-spring': '2025-01-29',
-  '2026-spring': '2026-02-17',
-  '2027-spring': '2027-02-06',
-  '2028-spring': '2028-01-26',
-  '2029-spring': '2029-02-13',
-  '2030-spring': '2030-02-03',
-  // 元宵（農曆1/15）
-  '2024-lantern': '2024-02-24',
-  '2025-lantern': '2025-02-12',
-  '2026-lantern': '2026-03-04',
-  '2027-lantern': '2027-02-21',
-  '2028-lantern': '2028-02-10',
-  '2029-lantern': '2029-02-28',
-  '2030-lantern': '2030-02-18',
   // 七夕（農曆7/7）
   '2024-qixi': '2024-08-10',
   '2025-qixi': '2025-08-29',
@@ -3831,22 +3798,6 @@ const LUNAR_DATES = {
   '2028-qixi': '2028-08-26',
   '2029-qixi': '2029-08-15',
   '2030-qixi': '2030-09-03',
-  // 中秋（農曆8/15）
-  '2024-mid-autumn': '2024-09-17',
-  '2025-mid-autumn': '2025-10-06',
-  '2026-mid-autumn': '2026-09-25',
-  '2027-mid-autumn': '2027-09-15',
-  '2028-mid-autumn': '2028-10-03',
-  '2029-mid-autumn': '2029-09-22',
-  '2030-mid-autumn': '2030-09-12',
-  // 除夕（春節前一天）
-  '2024-new-year-eve': '2024-02-09',
-  '2025-new-year-eve': '2025-01-28',
-  '2026-new-year-eve': '2026-02-16',
-  '2027-new-year-eve': '2027-02-05',
-  '2028-new-year-eve': '2028-01-25',
-  '2029-new-year-eve': '2029-02-12',
-  '2030-new-year-eve': '2030-02-02',
 };
 
 function getTodayHolidays() {
@@ -3862,25 +3813,9 @@ function getTodayHolidays() {
     if (h.month === month && h.day === day) found.push(h);
   }
 
-  // 動態：母親節（5月第二個星期日）
-  const mothersDay = getNthWeekday(year, 5, 2, 0);
-  if (mothersDay && mothersDay.month === month && mothersDay.day === day) {
-    found.push({ name:'母親節', emoji:'🌸' });
-  }
-
-  // 動態：父親節（台灣8/8已在固定清單，另加國際父親節6月第三個星期日）
-  const fathersDay = getNthWeekday(year, 6, 3, 0);
-  if (fathersDay && fathersDay.month === month && fathersDay.day === day) {
-    found.push({ name:'國際父親節', emoji:'👔' });
-  }
-
-  // 農曆節日查表
+  // 農曆節日查表（只有七夕）
   const lunarEvents = [
-    { key: 'spring',       name:'農曆新年・春節',  emoji:'🧨' },
-    { key: 'lantern',      name:'元宵節',          emoji:'🏮' },
-    { key: 'qixi',         name:'七夕情人節',       emoji:'🌌' },
-    { key: 'mid-autumn',   name:'中秋節',           emoji:'🌕' },
-    { key: 'new-year-eve', name:'除夕',             emoji:'🧧' },
+    { key: 'qixi', name:'七夕情人節', emoji:'🌌' },
   ];
   for (const ev of lunarEvents) {
     const dateStr = LUNAR_DATES[`${year}-${ev.key}`];
@@ -4531,25 +4466,25 @@ async function triggerAIAskTopic(charId) {
 
 // ─── 碎片畫廊 (Fragment Gallery) ───────────────────────
 // 好感度門檻：每 50/100 分解鎖一片
-const FRAGMENT_THRESHOLDS = [50,100,150,200,300,400,500,600,750,900,1100,1300,1500,1800,2100,2500];
+const FRAGMENT_THRESHOLDS = [50,100,150,200,270,350,440,540,640,760,880,1020,1160,1280,1400,1500];
 
 const FRAGMENT_DEPTH_HINTS = {
   50:   '初次印象',
   100:  '日常碎片',
   150:  '小小秘密',
   200:  '某個習慣',
-  300:  '過去的故事',
-  400:  '關於你',
-  500:  '從未說過的話',
-  600:  '內心深處',
-  750:  '特別的記憶',
-  900:  '只給你看',
-  1100: '珍藏的秘密',
-  1300: '關於我們',
-  1500: '心裡話',
-  1800: '告白碎片',
-  2100: '最深的秘密',
-  2500: '核心碎片',
+  270:  '過去的故事',
+  350:  '關於你',
+  440:  '從未說過的話',
+  540:  '內心深處',
+  640:  '特別的記憶',
+  760:  '只給你看',
+  880:  '珍藏的秘密',
+  1020: '關於我們',
+  1160: '心裡話',
+  1280: '告白碎片',
+  1400: '最深的秘密',
+  1500: '核心碎片',
 };
 
 async function checkFragmentUnlock(charId) {
@@ -4577,18 +4512,43 @@ async function generateFragment(charId, threshold) {
   const typeLabels = { monologue:'內心獨白', letter:'未寄出的信', memory:'記憶碎片', observation:'偷偷觀察', confession:'心裡話' };
   const chosenType = types[Math.floor(Math.random() * types.length)];
 
-  const prompt = `你是 ${char.name}。${(char.desc||'').slice(0,200)}
+  // 收集 persona 資訊
+  const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
+  const personaBlock = persona
+    ? `[用戶 Persona]\n姓名：${persona.name}${persona.desc ? `\n${persona.desc}` : ''}`
+    : '';
+
+  // 擷取最近 30 則對話作為背景脈絡
+  const chat = state.chats.find(c => c.charId === charId);
+  let recentChatBlock = '';
+  if (chat && chat.messages.length) {
+    const recentMsgs = chat.messages.filter(m => m.role !== 'system').slice(-30);
+    const chatSummary = recentMsgs.map(m => {
+      const speaker = m.role === 'assistant' ? char.name : (persona?.name || '她');
+      return `${speaker}：${m.content.slice(0, 100)}`;
+    }).join('\n');
+    recentChatBlock = `\n[近期對話摘要（最後 ${recentMsgs.length} 則）]\n${chatSummary}`;
+  }
+
+  const prompt = `你是 ${char.name}。以下是你完整的角色設定：
+
+[角色設定]
+${char.desc || '（無額外設定）'}
+${char.firstMsg ? `\n[初始台詞]\n${char.firstMsg}` : ''}
+${personaBlock ? '\n' + personaBlock : ''}
+${recentChatBlock}
+
 目前和用戶的關係：${relLv.label}（好感度 ${threshold} 分里程碑）。
 ${existing ? `已揭露過的碎片主題（不要重複）：${existing}` : ''}
 ${TW_LANG_INSTRUCTION}
 
-請生成一個「${depthHint}」主題的私密碎片，類型為「${typeLabels[chosenType]}」。
+請根據你對這段關係、對話歷程的理解，生成一個「${depthHint}」主題的私密碎片，類型為「${typeLabels[chosenType]}」。
 
 要求：
 - 以 ${char.name} 的第一人稱或第三人稱
 - 情感真實、細節具體，像是日記或私心話
 - 不超過 500 字
-- 要有令人心動或意外的細節
+- 要有令人心動或意外的細節，最好和對話中真實發生的事有所連結
 - 符合「${depthHint}」這個主題方向
 
 只輸出碎片內容本身，不加任何標題或說明。`;
@@ -4977,9 +4937,20 @@ function setUserStatus(mode, detail = '') {
 
 function getUserStatusPrompt() {
   const status = getUserStatus();
-  const hour = new Date().getHours();
+  const now = new Date();
+  const hour = now.getHours();
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
 
   if (status.mode === 'auto') {
+    if (isWeekend) {
+      if (hour >= 0 && hour < 9) {
+        return `[系統狀態：今天是假日，使用者睡了個懶覺還沒起床。說話輕柔一點，可以甜甜地問她睡醒了沒。]`;
+      } else if (hour >= 9 && hour < 23) {
+        return `[系統狀態：今天是假日，使用者正在放假休息。可以輕鬆愉快地聊天，聊聊她今天怎麼過、有沒有出去玩，不需要顧慮打擾工作。]`;
+      } else {
+        return `[系統狀態：假日深夜，使用者還沒睡。說話可以更柔和、親密，帶點關心和陪伴的感覺。]`;
+      }
+    }
     if (hour >= 8 && hour < 16) {
       return `[系統狀態：使用者目前正在上班中。請表現出陪伴與體貼的態度，偶爾可以溫柔關心工作狀況，提醒她喝水或休息，但不要過度打擾。]`;
     } else if (hour >= 16 && hour < 23) {
@@ -5004,8 +4975,15 @@ function getUserStatusPrompt() {
 
 function getStatusBadgeLabel() {
   const status = getUserStatus();
-  const hour = new Date().getHours();
+  const now = new Date();
+  const hour = now.getHours();
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
   if (status.mode === 'auto') {
+    if (isWeekend) {
+      if (hour >= 0 && hour < 9) return '🛌 假日賴床';
+      if (hour >= 9 && hour < 23) return '🌸 放假中';
+      return '🌙 假日深夜';
+    }
     if (hour >= 8 && hour < 16) return '🕒 上班中';
     if (hour >= 16 && hour < 23) return '🌇 下班後';
     return '🌙 深夜';
@@ -5248,27 +5226,28 @@ async function regenLastMessage() {
 // ─── STICKER PICKER ─────────────────────────────────
 // ── 預設表情組 ──────────────────────────────────
 const STICKER_PRESETS = {
-  '通用': [
-    '(開心地笑)','(害羞地捂臉)','(撒嬌)','(無奈嘆氣)',
-    '(興奮跳跳)','(思考中...)','(困惑歪頭)','(心動中)',
-    '(裝作沒聽到)','(偷偷觀察)','(賭氣鼓臉)','(溫柔微笑)',
+  '日常·專屬': [
+    '(興奮跳跳)','(理直氣壯地撒嬌)','(委屈地扁嘴)','(靈魂出竅地累癱)',
+    '(心虛撇眼)','(輕輕拉了拉你的衣角)','(把下巴靠在你肩上)','(假裝沒聽見但嘴角上揚)',
+    '(打哈欠揉眼睛)','(探頭偷看)','(雙手托腮盯著你)','(滿血復活)',
   ],
-  '小太陽': [
-    '(燦爛地笑)','(跑過去抱住)','(蹦蹦跳跳)','(滿臉期待)',
-    '(超大聲歡呼)','(眼睛閃閃發光)','(拉著你轉圈)','(興奮揮手)',
-    '(毫不掩飾地開心)','(嘴角壓不下去)','(活力四射地說)','(雙手比愛心)',
+  '亦友·打鬧': [
+    '(一臉嫌棄但還是妥協了)','(沒好氣地笑出聲)','(伸手把你的頭髮揉亂)',
+    '(敷衍地拍手)','(挑釁地挑眉)','(翻了個沒有惡意的大白眼)',
+    '(用手肘戳了戳你)','(憋笑到肩膀發抖)','(毫不客氣地吐槽)',
+    '(假裝要打人)','(默契地交換了一個眼神)','(嘆氣但眼神很寵)',
   ],
-  '理性·無奈': [
-    '(淡淡地看了你一眼)','(輕嘆一口氣)','(無奈地揉太陽穴)',
-    '(勉強配合地點頭)','(沉默片刻)','(眉頭微微蹙起)',
-    '(放棄解釋地聳肩)','(面無表情地說)','(內心os：算了)',
-    '(理解但不認同地點頭)','(忍住沒說什麼)','(冷靜地回應)',
+  '曖昧·拉扯': [
+    '(裝作不經意地碰到手)','(耳根微紅但故作鎮定)','(深深看了你一眼)',
+    '(氣氛突然安靜下來)','(視線不自覺落在你唇上)','(低頭掩飾笑意)',
+    '(欲言又止)','(突然湊得很近)','(輕輕嘆息著妥協)',
+    '(不自覺地放輕聲音)','(眼神變得有些危險)','(手指輕輕蜷縮)',
   ],
-  '天然黑': [
-    '(一臉無辜地說)','(眨了眨眼)','(認真地問)',
-    '(毫不自覺地說出心聲)','(直視對方)','(平靜地反問)',
-    '(說完才意識到有點毒)','(帶著純真笑容)','(不懂為什麼對方臉紅)',
-    '(誠懇地補刀)','(天然地說了件殺傷力很高的話)','(完全不覺得哪裡不對)',
+  '微醺·越界': [
+    '(懶洋洋地靠著你)','(帶著微醺的鼻音)','(直勾勾地盯著你看)',
+    '(得寸進尺地抱緊)','(把臉埋進你頸窩)','(指尖輕輕劃過手背)',
+    '(半真半假地試探)','(輕輕碰杯)','(笑著不說話)','(帶著酒意撒嬌)',
+    '(卸下防備地蹭了蹭)','(聲音變得低沉沙啞)',
   ],
 };
 

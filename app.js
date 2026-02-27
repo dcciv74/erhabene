@@ -622,35 +622,35 @@ function renderMobileChatList() {
     return bTime - aTime;
   });
 
-  let html = `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem 0.4rem;">
-      <div style="font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>
-      <button onclick="switchPage('chars')" style="
-        display:flex;align-items:center;gap:0.3rem;
-        background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.25);
-        border-radius:20px;padding:0.3rem 0.7rem;cursor:pointer;
-        font-size:0.72rem;color:var(--text-mid);font-weight:500;
-        transition:all 0.15s;
-      ">👤 角色</button>
-    </div>`;
+  // 封存邏輯（與 sidebar 一致：5天無訊息 → 封存）
+  const ARCHIVE_DAYS_M = 5;
+  const archiveThreshold = Date.now() - ARCHIVE_DAYS_M * 24 * 60 * 60 * 1000;
+  const activeChats = sortedChats.filter(c => {
+    const lastTime = c.messages.length ? c.messages[c.messages.length - 1].time : (c.createdAt || 0);
+    return lastTime >= archiveThreshold || c.id === state.activeChat;
+  });
+  const archivedChats = sortedChats.filter(c => {
+    const lastTime = c.messages.length ? c.messages[c.messages.length - 1].time : (c.createdAt || 0);
+    return lastTime < archiveThreshold && c.id !== state.activeChat;
+  });
 
-  sortedChats.forEach(chat => {
+  const renderChatRow = (chat, isArchived = false) => {
     const char = state.chars.find(c => c.id === chat.charId);
-    if (!char) return;
+    if (!char) return '';
     const isImg = char.avatar?.startsWith('data:') || isImgSrc(char.avatar);
     const avatarHtml = isImg
       ? `<img src="${char.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
       : `<span style="font-size:1.3rem;">${char.avatar || '🌸'}</span>`;
-
     const lastMsg = chat.messages[chat.messages.length - 1];
     const preview = lastMsg?.content?.slice(0, 40) || '開始聊天...';
     const timeStr = lastMsg ? formatTime(lastMsg.time) : '';
     const isActive = chat.id === state.activeChat;
-    html += `
+    return `
       <div onclick="openChatFromMobile('${chat.id}')"
         style="display:flex;align-items:center;gap:0.85rem;padding:0.8rem 1rem;
           border-bottom:1px solid rgba(201,184,232,0.12);cursor:pointer;
           background:${isActive ? 'rgba(201,184,232,0.18)' : 'transparent'};
+          ${isArchived ? 'opacity:0.65;' : ''}
           transition:background 0.15s;">
         <div style="width:44px;height:44px;border-radius:50%;flex-shrink:0;
           background:linear-gradient(135deg,var(--lavender),var(--milk-blue));
@@ -665,7 +665,40 @@ function renderMobileChatList() {
           <div style="font-size:0.75rem;color:var(--text-light);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${preview}</div>
         </div>
       </div>`;
-  });
+  };
+
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem 0.4rem;">
+      <div style="font-size:0.8rem;color:var(--text-light);font-weight:600;letter-spacing:0.05em;">聊天列表</div>
+      <button onclick="switchPage('chars')" style="
+        display:flex;align-items:center;gap:0.3rem;
+        background:var(--lavender-soft);border:1px solid rgba(201,184,232,0.25);
+        border-radius:20px;padding:0.3rem 0.7rem;cursor:pointer;
+        font-size:0.72rem;color:var(--text-mid);font-weight:500;
+        transition:all 0.15s;
+      ">👤 角色</button>
+    </div>`;
+
+  activeChats.forEach(chat => { html += renderChatRow(chat); });
+
+  if (archivedChats.length > 0) {
+    const archiveKey = 'erh_mobile_archive_open';
+    const isOpen = localStorage.getItem(archiveKey) === '1';
+    html += `
+      <div onclick="
+        const nowOpen = localStorage.getItem('erh_mobile_archive_open') === '1';
+        localStorage.setItem('erh_mobile_archive_open', nowOpen ? '0' : '1');
+        renderMobileChatList();
+      " style="display:flex;align-items:center;padding:0.6rem 1rem;cursor:pointer;
+        border-bottom:1px solid rgba(201,184,232,0.12);
+        color:var(--text-light);font-size:0.78rem;">
+        <span style="flex:1;">📦 封存（${archivedChats.length}）</span>
+        <span style="transition:transform 0.2s;transform:rotate(${isOpen ? '90' : '0'}deg);display:inline-block;">›</span>
+      </div>`;
+    if (isOpen) {
+      archivedChats.forEach(chat => { html += renderChatRow(chat, true); });
+    }
+  }
 
   container.innerHTML = html;
 }
@@ -3026,17 +3059,18 @@ function buildSocialImagePrompt(option, char, persona, postContent) {
 async function autoSilentSocialPost() {
   if (!state.apiKey || !state.chars.length) return;
   const todayStr = new Date().toDateString();
-  const autoKey = `erh_social_auto_${todayStr}`;
-  if (localStorage.getItem(autoKey)) return;
 
-  // 選最近有聊天的角色
-  const charWithChat = state.chars.find(char => {
+  // 收集所有有聊天記錄、且今天還沒自動發過文的角色
+  const eligible = state.chars.filter(char => {
     const chats = state.chats.filter(c => c.charId === char.id);
-    return chats.some(c => c.messages.length > 0);
+    const hasChat = chats.some(c => c.messages.length > 0);
+    const alreadyPosted = localStorage.getItem(`erh_social_auto_${char.id}_${todayStr}`);
+    return hasChat && !alreadyPosted;
   });
-  if (!charWithChat) return;
+  if (!eligible.length) return;
 
-  const char = charWithChat;
+  // 從符合條件的角色中隨機選一個
+  const char = eligible[Math.floor(Math.random() * eligible.length)];
   const persona = char.personaId ? state.personas.find(p => p.id === char.personaId) : null;
   const charChats = state.chats.filter(c => c.charId === char.id);
   const recentMsgs = charChats.flatMap(c => c.messages).sort((a,b) => b.time - a.time).slice(0,12).reverse()
@@ -3060,7 +3094,7 @@ async function autoSilentSocialPost() {
     const post = { id: uid(), charId: char.id, platform: 'social', content, authorName: char.name, imageUrl: null, likes: 0, comments: [], time: Date.now() };
     state.socialPosts.push(post);
     await dbPut('socialPosts', post);
-    localStorage.setItem(autoKey, '1');
+    localStorage.setItem(`erh_social_auto_${char.id}_${todayStr}`, '1');
     renderSocialFeed();
     showToast(`✦ ${char.name} 今天發了一篇動態`);
   } catch(e) { /* silent */ }

@@ -996,11 +996,11 @@ function buildMsgRow(msg, char, isFirstInGroup, isLastInGroup) {
 
   const timeEl = isLastInGroup ? `<div class="msg-time">${formatTime(msg.time)}</div>` : '';
 
-  const actionsHtml = `<div class="msg-actions ${isUser ? 'msg-actions-left' : 'msg-actions-right'}">
-    <button class="msg-action-btn" onclick="startInlineEdit('${msg.id}')" title="編輯">✏️</button>
-    <button class="msg-action-btn" onclick="copyMsg('${msg.id}')" title="複製">📋</button>
-    ${!isUser ? `<button class="msg-action-btn" onclick="ctxRegenFromMsg('${msg.id}')" title="重新生成">🔄</button>` : ''}
-    <button class="msg-action-btn danger" onclick="deleteMsgDirect('${msg.id}')" title="刪除">🗑️</button>
+  const actionsHtml = `<div class="msg-actions ${isUser ? 'msg-actions-left' : 'msg-actions-right'}" id="msg-actions-${msg.id}">
+    <button class="msg-action-btn" onclick="startInlineEdit('${msg.id}');hideMsgActions()" title="編輯">✏️ 編輯</button>
+    <button class="msg-action-btn" onclick="copyMsg('${msg.id}');hideMsgActions()" title="複製">📋 複製</button>
+    ${!isUser ? `<button class="msg-action-btn" onclick="ctxRegenFromMsg('${msg.id}');hideMsgActions()" title="重新生成">🔄 重生成</button>` : ''}
+    <button class="msg-action-btn danger" onclick="deleteMsgDirect('${msg.id}');hideMsgActions()" title="刪除">🗑️ 刪除</button>
   </div>`;
 
   if (state.swipeDelete) {
@@ -1050,13 +1050,24 @@ function buildMsgRow(msg, char, isFirstInGroup, isLastInGroup) {
     row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
     return wrapper;
   } else {
-    const delBtnHtml = `<button class="msg-del-btn" onclick="deleteMsgDirect('${msg.id}')" title="刪除">×</button>`;
     if (isUser) {
-      row.innerHTML = `${delBtnHtml}${actionsHtml}${timeEl}${bubbleContent}`;
+      row.innerHTML = `${actionsHtml}${timeEl}${bubbleContent}`;
     } else {
-      row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}${actionsHtml}${delBtnHtml}`;
+      row.innerHTML = `${avatarHtml}${bubbleContent}${timeEl}${actionsHtml}`;
     }
-    row.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e, msg.id); });
+    // 點 bubble 切換選單
+    const bubbleEl = row.querySelector('.msg-bubble, .msg-image, .msg-sticker');
+    if (bubbleEl) {
+      bubbleEl.addEventListener('click', e => {
+        e.stopPropagation();
+        const panel = document.getElementById(`msg-actions-${msg.id}`);
+        if (!panel) return;
+        const isShowing = panel.classList.contains('bubble-show');
+        hideMsgActions();
+        if (!isShowing) panel.classList.add('bubble-show');
+      });
+    }
+    row.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); const panel = document.getElementById(`msg-actions-${msg.id}`); if (panel) { hideMsgActions(); panel.classList.add('bubble-show'); } });
     return row;
   }
 }
@@ -5186,6 +5197,12 @@ function toggleRealWorldEvents() {
 
 // ─── CONTEXT MENU ────────────────────────────────────
 // (longPressTimer is now local per message row — see renderMessages)
+
+function hideMsgActions() {
+  document.querySelectorAll('.msg-actions.bubble-show').forEach(el => el.classList.remove('bubble-show'));
+}
+// 點空白處關閉
+document.addEventListener('click', () => hideMsgActions());
 
 function showCtxMenu(e, msgId) {
   state.ctxTargetMsgId = msgId;

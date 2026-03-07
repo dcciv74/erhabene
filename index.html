@@ -2574,9 +2574,25 @@ body {
       </div>
     </div>
     <div class="modal-tab-content" id="preset-jailbreak">
+      <div class="modal-field" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem;">
+        <label class="modal-label" style="margin:0;">越獄提示詞</label>
+        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-size:0.8rem;">
+          <span id="jailbreak-toggle-label" style="color:var(--text-light);">關閉</span>
+          <div class="jb-track" onclick="var cb=document.getElementById('jailbreak-toggle');cb.checked=!cb.checked;cb.dispatchEvent(new Event('change'));">
+            <input type="checkbox" id="jailbreak-toggle" style="display:none;"
+              onchange="var on=this.checked;document.getElementById('jailbreak-toggle-label').textContent=on?'啟用':'關閉';document.querySelector('.jb-track').classList.toggle('on',on);">
+            <div class="jb-knob"></div>
+          </div>
+        </label>
+      </div>
+      <style>
+        .jb-track{position:relative;width:38px;height:22px;border-radius:11px;background:var(--border-light);transition:background .2s;flex-shrink:0;}
+        .jb-track.on{background:var(--primary);}
+        .jb-knob{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:transform .2s;}
+        .jb-track.on .jb-knob{transform:translateX(16px);}
+      </style>
       <div class="modal-field">
-        <label class="modal-label">越獄提示詞 (注入到 Context 末尾)</label>
-        <textarea class="modal-textarea" id="jailbreak-input" style="min-height:140px" placeholder="[場景描述，幫助 AI 更好地扮演角色...]"></textarea>
+        <textarea class="modal-textarea" id="jailbreak-input" style="min-height:120px" placeholder="[場景描述，幫助 AI 更好地扮演角色...]"></textarea>
       </div>
       <div class="modal-field">
         <label class="modal-label">注入位置</label>
@@ -2586,6 +2602,14 @@ body {
           <option value="before_last">最後一則訊息之前</option>
           <option value="system">System 層</option>
         </select>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">已儲存的提示詞</label>
+        <div id="saved-prompts-list" style="min-height:1.5rem;"></div>
+        <div style="display:flex;gap:0.5rem;margin-top:0.55rem;">
+          <input id="new-prompt-name" placeholder="幫這組提示詞命名…" style="flex:1;font-size:0.82rem;padding:0.35rem 0.6rem;border-radius:8px;border:1px solid var(--border-light);background:var(--bg-input,#f5f5f5);color:var(--text-dark);outline:none;">
+          <button onclick="saveCustomPrompt()" style="font-size:0.78rem;padding:0.35rem 0.8rem;border-radius:8px;background:var(--primary);color:#fff;border:none;cursor:pointer;white-space:nowrap;">儲存當前</button>
+        </div>
       </div>
     </div>
     <div class="modal-tab-content" id="preset-regex">

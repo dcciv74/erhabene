@@ -66,6 +66,8 @@ Do NOT write one long paragraph. Do NOT use asterisks for actions. Use (括號) 
 Stay in character. Be warm, casual, and emotionally real.`,
   jailbreak: '',
   jailbreakPosition: 'before_last',
+  jailbreakEnabled: true,
+  savedPrompts: [], // [{id, name, content}]
   regexRules: '',
   chatStyle: 'line', // 'line' | 'prose'
   socialPosts: [],  // [{id, charId, platform, content, imageUrl, comments:[], time}]
@@ -224,6 +226,8 @@ async function loadAllData() {
   if (s.chatStyle) state.chatStyle = s.chatStyle;
   if (s.jailbreak) state.jailbreak = s.jailbreak;
   if (s.jailbreakPosition) state.jailbreakPosition = s.jailbreakPosition;
+  if (typeof s.jailbreakEnabled === 'boolean') state.jailbreakEnabled = s.jailbreakEnabled;
+  if (s.savedPrompts) state.savedPrompts = s.savedPrompts;
   if (s.regexRules) state.regexRules = s.regexRules;
   if (s.realWorldEvents !== undefined) state.realWorldEvents = s.realWorldEvents;
   if (s.userBirthday) state.userBirthday = s.userBirthday;
@@ -247,6 +251,8 @@ async function saveSettings() {
     chatStyle: state.chatStyle,
     jailbreak: state.jailbreak,
     jailbreakPosition: state.jailbreakPosition,
+    jailbreakEnabled: state.jailbreakEnabled,
+    savedPrompts: state.savedPrompts,
     regexRules: state.regexRules,
     realWorldEvents: state.realWorldEvents,
     userBirthday: state.userBirthday,
@@ -1471,7 +1477,7 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
   }
 
   // Jailbreak
-  if (state.jailbreak && state.jailbreakPosition === 'system') {
+  if (state.jailbreak && state.jailbreakEnabled && state.jailbreakPosition === 'system') {
     systemParts.push('\n' + state.jailbreak);
   }
 
@@ -1498,7 +1504,7 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
       lastUserParts.push({ inlineData: { mimeType: img.mimeType, data: img.base64 } });
     });
   }
-  if (state.jailbreak && state.jailbreakPosition === 'before_last') {
+  if (state.jailbreak && state.jailbreakEnabled && state.jailbreakPosition === 'before_last') {
     lastUserParts.push({ text: state.jailbreak + '\n\n' + userMessage });
   } else {
     lastUserParts.push({ text: userMessage });
@@ -1534,6 +1540,11 @@ async function callGemini(chatId, userMessage, overrideSystem = null, userImages
 }
 
 function splitIntoMessages(text) {
+  // Prose / custom 模式：整段回傳，保留段落換行，不切 bubble
+  if (state.chatStyle === 'prose' || state.chatStyle === 'custom') {
+    return [text];
+  }
+
   // Step 1: 優先按雙換行（AI 用 \n\n 明確分隔的訊息）切割
   const doubleNewlineParts = text.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
 
@@ -2820,6 +2831,8 @@ async function importBackup() {
         state.systemPrompt = data.settings.systemPrompt || state.systemPrompt;
         state.jailbreak = data.settings.jailbreak || '';
         state.jailbreakPosition = data.settings.jailbreakPosition || 'before_last';
+        state.jailbreakEnabled = data.settings.jailbreakEnabled ?? true;
+        state.savedPrompts = data.settings.savedPrompts || [];
         state.regexRules = data.settings.regexRules || '';
       }
 
@@ -4902,13 +4915,56 @@ function savePreset() {
   }
   state.jailbreak = document.getElementById('jailbreak-input').value;
   state.jailbreakPosition = document.getElementById('jailbreak-position').value;
+  state.jailbreakEnabled = document.getElementById('jailbreak-toggle')?.checked ?? true;
   state.regexRules = document.getElementById('regex-input').value;
   saveSettings();
   closeModal('preset-modal');
   showToast('✓ Preset 已儲存');
 }
 
-function saveModelSettings() {
+// ─── SAVED PROMPTS ───────────────────────────────────
+function renderSavedPrompts() {
+  const list = document.getElementById('saved-prompts-list');
+  if (!list) return;
+  if (!state.savedPrompts.length) {
+    list.innerHTML = '<div style="font-size:0.78rem;color:var(--text-light);padding:0.4rem 0;">尚無儲存的提示詞</div>';
+    return;
+  }
+  list.innerHTML = state.savedPrompts.map(p => `
+    <div class="saved-prompt-item" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0;border-bottom:1px solid var(--border-light);">
+      <span style="flex:1;font-size:0.82rem;color:var(--text-dark);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${p.content.replace(/"/g,'&quot;')}">${p.name}</span>
+      <button onclick="applyCustomPrompt('${p.id}')" style="font-size:0.72rem;padding:0.2rem 0.55rem;border-radius:6px;background:var(--primary);color:#fff;border:none;cursor:pointer;">套用</button>
+      <button onclick="deleteCustomPrompt('${p.id}')" style="font-size:0.72rem;padding:0.2rem 0.45rem;border-radius:6px;background:transparent;color:var(--text-light);border:1px solid var(--border-light);cursor:pointer;">✕</button>
+    </div>`).join('');
+}
+
+function saveCustomPrompt() {
+  const name = document.getElementById('new-prompt-name')?.value.trim();
+  const content = document.getElementById('jailbreak-input')?.value.trim();
+  if (!name) { showToast('請輸入名稱'); return; }
+  if (!content) { showToast('提示詞內容為空'); return; }
+  state.savedPrompts.push({ id: uid(), name, content });
+  saveSettings();
+  document.getElementById('new-prompt-name').value = '';
+  renderSavedPrompts();
+  showToast('✓ 已儲存');
+}
+
+function applyCustomPrompt(id) {
+  const p = state.savedPrompts.find(x => x.id === id);
+  if (!p) return;
+  const ta = document.getElementById('jailbreak-input');
+  if (ta) ta.value = p.content;
+  showToast(`已套用：${p.name}`);
+}
+
+function deleteCustomPrompt(id) {
+  state.savedPrompts = state.savedPrompts.filter(x => x.id !== id);
+  saveSettings();
+  renderSavedPrompts();
+}
+
+
   const key = document.getElementById('api-key-update').value.trim();
   const customModel = document.getElementById('model-custom-input')?.value?.trim();
   const selectModel = document.getElementById('model-update-select')?.value;
@@ -5440,6 +5496,13 @@ function openModal(id) {
         ? PROMPT_TEMPLATES[state.chatStyle] : state.systemPrompt;
     document.getElementById('jailbreak-input').value = state.jailbreak;
     document.getElementById('jailbreak-position').value = state.jailbreakPosition;
+    const toggle = document.getElementById('jailbreak-toggle');
+    if (toggle) {
+      toggle.checked = state.jailbreakEnabled;
+      document.getElementById('jailbreak-toggle-label').textContent = state.jailbreakEnabled ? '啟用' : '關閉';
+      document.querySelector('.jb-track')?.classList.toggle('on', state.jailbreakEnabled);
+    }
+    renderSavedPrompts();
     document.getElementById('regex-input').value = state.regexRules;
   }
   if (id === 'social-compose-modal') {

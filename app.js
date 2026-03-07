@@ -4964,7 +4964,7 @@ function deleteCustomPrompt(id) {
   renderSavedPrompts();
 }
 
-
+function saveModelSettings() {
   const key = document.getElementById('api-key-update').value.trim();
   const customModel = document.getElementById('model-custom-input')?.value?.trim();
   const selectModel = document.getElementById('model-update-select')?.value;
